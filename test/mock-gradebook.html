@@ -1,0 +1,34 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Family Access - Gradebook</title>
+<style>body{font:12px Arial;background:#e9eef3} table{border-collapse:collapse} td,th{border:1px solid #bbb;padding:3px 6px} .wrap{display:flex}</style>
+</head><body>
+<!-- Mimics the Skyward SMS 2.0 gradebook DOM: frozen class table + scrolling grade table. -->
+<div style="background:#1a1a1a;color:#eee;padding:12px 16px;font:14px Arial;margin-bottom:10px">
+  <b>Practice page.</b> This is a fake Skyward gradebook with made-up grades, for testing.
+  <button id="runGlow" style="margin-left:10px;padding:6px 12px;font-weight:bold;cursor:pointer">Run Skyward Glow</button>
+  (or paste the code into the console, or click your bookmark)
+</div>
+<div id="sf_StudentLabel">Doe, Jordan A</div>
+<div id="grid_stuGradesGrid_12345_2026" class="sf_gridTableWrap"><div class="wrap">
+<table id="grid_stuGradesGrid_12345_2026_gradeGrid_lockedtable"><thead><tr><th>Class</th></tr></thead><tbody id="left"></tbody></table>
+<table id="grid_stuGradesGrid_12345_2026_gradeGrid"><thead><tr id="hdr"></tr></thead><tbody id="right"></tbody></table>
+</div></div>
+<div id="dlg" style="display:none;position:fixed;top:20%;left:30%;background:#fff;border:2px solid #345;padding:20px">Assignment details for <span id="dlgc"></span> <button onclick="this.parentNode.style.display='none'">X</button></div>
+<script>
+var terms=['PR1','Q1','PR2','Q2','S1','PR3','Q3'];
+var classes=[
+ ['ENGLISH 2 HONORS','Smith, Alicia','1','7:30 AM - 8:20 AM',[94,92,95,null,null,null,null]],
+ ['ALGEBRA 2','Nguyen, Peter','2','8:25 AM - 9:15 AM',[81,78,74,null,null,null,null]],
+ ['CHEMISTRY 1 HON','Garcia, Maria','3','9:20 AM - 10:10 AM',[88,90,'89 B+',null,null,null,null]],
+ ['AP WORLD HISTORY','Johnson, Mark','4','10:15 AM - 11:05 AM',[97,96,98,null,null,null,null]],
+ ['SPANISH 2','Lopez, Ana','5','11:40 AM - 12:30 PM',[65,72,68,null,null,null,null]],
+ ['PE/HEALTH','Brown, Tim','6','12:35 PM - 1:25 PM',[100,100,100,null,null,null,null]],
+ ['DRAWING 1','Lee, Kim','7','1:30 PM - 2:20 PM',[null,null,null,null,null,null,null]]];
+document.getElementById('hdr').innerHTML=terms.map(t=>'<th>'+t+'</th>').join('');
+classes.forEach(function(c,i){
+ document.getElementById('left').insertAdjacentHTML('beforeend','<tr><td scope="row"><div class="gb_classDesc"><span class="bld classDesc"><a href="javascript:void(0)">'+c[0]+'</a></span><br><label class="bld">Period</label> '+c[2]+' <span class="fXs">('+c[3]+')</span><br><a href="javascript:void(0)">'+c[1]+'</a></div></td></tr>');
+ document.getElementById('right').insertAdjacentHTML('beforeend','<tr>'+c[4].map(function(g,j){return '<td>'+(g==null?'&nbsp;':'<a id="showGradeInfo" href="javascript:void(0)" data-cni="'+(9000+i)+'" data-lit="'+terms[j]+'">'+g+'</a>')+'</td>'}).join('')+'</tr>');
+});
+document.addEventListener('click',function(e){var a=e.target.closest('#showGradeInfo');if(!a)return;document.getElementById('dlgc').textContent=a.dataset.cni+' '+a.dataset.lit;document.getElementById('dlg').style.display='block';});
+document.getElementById('runGlow').onclick=function(){var s=document.createElement('script');s.src='../glow.js?'+Date.now();document.body.appendChild(s);};
+</script></body></html>
