@@ -1,28 +1,47 @@
 /*
- * Skyward Glow — a better-looking Skyward Family Access gradebook.
+ * Skyward Glow — a better-looking Skyward Family Access.
  *
- * How to use: log in to Skyward, open the Gradebook page, then paste this
- * whole file into the browser console (F12 → Console) and press Enter.
- * It reads the grades that are already on the page and draws a new
- * dashboard on top. Nothing is sent anywhere; it only reads the page.
+ * How to use: log in to Skyward (the Gradebook page works best), then run
+ * this script from a bookmark or paste it into the browser console
+ * (F12 → Console). It reads what Skyward already shows you and draws a new
+ * app on top: Home, Grades, Schedule, Attendance and the rest of Skyward's
+ * menu. Nothing is sent anywhere except back to Skyward itself.
  * Run it again (or press Esc / "Original") to get back to plain Skyward.
  */
-(function () {
+(async function () {
   'use strict';
 
-  var HOST_ID = 'skyward-glow-host';
-  var STORE_KEY = 'skywardGlow:lastSnapshot';
-  var existing = document.getElementById(HOST_ID);
-  if (existing) { existing.remove(); removeBackPill(); var ps = document.getElementById(HOST_ID + '-print'); if (ps) ps.remove(); document.documentElement.style.overflow = ''; return; }
+  const HOST_ID = 'skyward-glow-host';
+  const SNAP_KEY = 'skywardGlow:lastSnapshot';
+  const THEME_KEY = 'skywardGlow:theme';
 
-  // ---------------------------------------------------------------- scrape
+  const existing = document.getElementById(HOST_ID);
+  if (existing) { teardown(); return; }
 
-  function clean(s) { return (s || '').replace(/\s+/g, ' ').trim(); }
+  // ================================================================ utils
+
+  const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const fmt = (n, digits = 1) => (n == null || isNaN(n) ? '—' : n.toFixed(digits));
+  const $$ = (root, sel) => Array.from(root.querySelectorAll(sel));
+
+  function store(key, value) {
+    try {
+      if (value === undefined) return JSON.parse(localStorage.getItem(key) || 'null');
+      localStorage.setItem(key, JSON.stringify(value));
+    } catch (e) { return null; } // storage can be blocked; everything still works without it
+  }
+
+  function letterFor(n) {
+    if (n == null) return null;
+    return n >= 90 ? 'A' : n >= 80 ? 'B' : n >= 70 ? 'C' : n >= 60 ? 'D' : 'F';
+  }
 
   function parseGrade(text) {
-    var t = clean(text);
-    var num = t.match(/-?\d+(\.\d+)?/);
-    var letter = t.match(/\b([A-F][+-]?)\b/);
+    const t = clean(text);
+    const num = t.match(/-?\d+(\.\d+)?/);
+    const letter = t.match(/\b([A-F][+-]?)\b/);
     return {
       raw: t,
       score: num ? parseFloat(num[0]) : null,
@@ -30,22 +49,32 @@
     };
   }
 
-  function letterFor(n) {
-    if (n == null) return null;
-    if (n >= 90) return 'A';
-    if (n >= 80) return 'B';
-    if (n >= 70) return 'C';
-    if (n >= 60) return 'D';
-    return 'F';
+  function titleCase(s) {
+    if (s !== s.toUpperCase()) return s;
+    return s.toLowerCase().replace(/\b([a-z])/g, (m) => m.toUpperCase())
+      .replace(/\b(Ap|Ib|Aice|Ese|Pe|Jrotc|Ii|Iii|Iv)\b/g, (m) => m.toUpperCase())
+      .replace(/\bHon\b/g, 'Honors');
   }
+
+  function isVisible(el) {
+    return !!(el && el.getClientRects().length && getComputedStyle(el).visibility !== 'hidden');
+  }
+
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const ICON = ICONS();
+
+  // ============================================================ gradebook
 
   function gradeLinks(root) {
-    return Array.prototype.slice.call(root.querySelectorAll('a[id="showGradeInfo"], a[data-lit]'));
+    return $$(root, 'a[id="showGradeInfo"], a[data-lit]');
   }
 
-  function rowIndex(tr) {
-    var body = tr.parentElement;
-    return Array.prototype.indexOf.call(body.children, tr);
+  // The nearest ancestor of the grade table that also holds class names.
+  function gridFor(tr) {
+    const body = tr.ownerDocument.body;
+    let node = tr.closest('table').parentElement;
+    while (node && node !== body && !node.querySelector('.classDesc, .gb_classDesc')) node = node.parentElement;
+    return node || body;
   }
 
   // Skyward splits each grade grid into a frozen left table (class names)
@@ -53,417 +82,984 @@
   // each grade row we look for the class description in the matching row
   // of any sibling table inside the same grid.
   function describeRow(tr, grid) {
-    var info = classInfo(tr);
+    let info = classInfo(tr);
     if (info) return info;
-    var idx = rowIndex(tr);
-    var tables = grid.querySelectorAll('table');
-    for (var i = 0; i < tables.length; i++) {
-      if (tables[i].contains(tr)) continue;
-      var bodies = tables[i].tBodies.length ? tables[i].tBodies : [tables[i]];
-      for (var b = 0; b < bodies.length; b++) {
-        var row = bodies[b].children[idx];
-        if (row && row.tagName === 'TR') {
-          info = classInfo(row);
-          if (info) return info;
-        }
+    const idx = Array.prototype.indexOf.call(tr.parentElement.children, tr);
+    for (const table of $$(grid, 'table')) {
+      if (table.contains(tr)) continue;
+      const bodies = table.tBodies.length ? Array.from(table.tBodies) : [table];
+      for (const body of bodies) {
+        const row = body.children[idx];
+        if (row && row.tagName === 'TR' && (info = classInfo(row))) return info;
       }
     }
     return null;
   }
 
-  // The nearest ancestor of the grade table that also holds class names.
-  function gridFor(tr) {
-    var node = tr.closest('table').parentElement;
-    while (node && node !== document.body && !node.querySelector('.classDesc, .gb_classDesc')) node = node.parentElement;
-    return node || document.body;
-  }
-
   function classInfo(row) {
-    var desc = row.querySelector('.classDesc') || row.querySelector('.gb_classDesc, [class*="classDesc"]');
+    const desc = row.querySelector('.classDesc') || row.querySelector('.gb_classDesc, [class*="classDesc"]');
     if (!desc) return null;
-    var cell = desc.closest('td, th') || desc.parentElement;
-    var nameEl = desc.querySelector('a') || desc;
-    var name = clean(nameEl.textContent);
+    const cell = desc.closest('td, th') || desc.parentElement;
+    const nameEl = desc.querySelector('a') || desc;
+    const name = clean(nameEl.textContent);
     if (!name) return null;
-    var text = clean(cell.textContent);
-    var teacher = '';
-    var links = cell.querySelectorAll('a');
-    for (var i = links.length - 1; i >= 0; i--) {
-      if (links[i] !== nameEl && clean(links[i].textContent)) { teacher = clean(links[i].textContent); break; }
+    // Period, time and teacher usually sit in the same cell as the class
+    // name, but some districts spread them across the row.
+    let period = '', time = '', teacher = '';
+    for (const scope of [cell, row]) {
+      const text = clean(scope.textContent);
+      period = period || (text.match(/Period\s*([\w-]+)/i) || [])[1] || '';
+      time = time || (text.match(/\(([^)]*(?:AM|PM)[^)]*)\)/i) || [])[1] || '';
+      teacher = teacher || teacherLink(scope, nameEl) ||
+        (text.match(/(?:AM|PM)\s*\)\s*([A-Za-z][A-Za-z.'’ -]*[A-Za-z])/) || [])[1] || '';
     }
-    var period = (text.match(/Period\s*([\w-]+)/i) || [])[1] || '';
-    var time = (text.match(/\(([^)]*(?:AM|PM)[^)]*)\)/i) || [])[1] || '';
-    return { name: titleCase(name), teacher: teacher, period: period, time: time };
+    return { name: titleCase(name), teacher, period, time };
   }
 
-  function titleCase(s) {
-    if (s !== s.toUpperCase()) return s;
-    return s.toLowerCase().replace(/\b([a-z])/g, function (m) { return m.toUpperCase(); })
-      .replace(/\b(Ap|Ib|Aice|Ese|Pe|Jrotc|Ii|Iii|Iv)\b/g, function (m) { return m.toUpperCase(); })
-      .replace(/\bHon\b/g, 'Honors');
-  }
-
-  function scrape(doc) {
-    var links = gradeLinks(doc);
-    var courses = [];
-    var byKey = {};
-    var termOrder = [];
-
-    links.forEach(function (a) {
-      var tr = a.closest('tr');
-      if (!tr) return;
-      var info = describeRow(tr, gridFor(tr)) || { name: 'Class ' + (a.getAttribute('data-cni') || courses.length + 1), teacher: '', period: '', time: '' };
-      var key = (a.getAttribute('data-cni') || '') + '|' + info.name + '|' + info.period;
-      var course = byKey[key];
-      if (!course) {
-        course = byKey[key] = { key: key, name: info.name, teacher: info.teacher, period: info.period, time: info.time, grades: {}, links: {} };
-        courses.push(course);
-      }
-      var term = clean(a.getAttribute('data-lit')) || termFromHeader(a) || 'Grade';
-      if (termOrder.indexOf(term) === -1) termOrder.push(term);
-      var g = parseGrade(a.textContent);
-      if (g.raw) { course.grades[term] = g; course.links[term] = a; }
-    });
-
-    // Classes that are listed but have no grades yet.
-    Array.prototype.forEach.call(doc.querySelectorAll('.classDesc'), function (desc) {
-      var row = desc.closest('tr');
-      var info = row && classInfo(row);
-      if (!info) return;
-      var known = courses.some(function (c) { return c.name === info.name && c.period === info.period; });
-      if (!known) courses.push({ key: info.name + '|' + info.period, name: info.name, teacher: info.teacher, period: info.period, time: info.time, grades: {}, links: {} });
-    });
-
-    courses.sort(function (a, b) {
-      var pa = parseInt(a.period, 10), pb = parseInt(b.period, 10);
-      if (isNaN(pa) && isNaN(pb)) return a.name.localeCompare(b.name);
-      if (isNaN(pa)) return 1;
-      if (isNaN(pb)) return -1;
-      return pa - pb;
-    });
-
-    return { courses: courses, terms: termOrder, student: studentName(doc) };
+  function teacherLink(scope, nameEl) {
+    const links = $$(scope, 'a');
+    for (let i = links.length - 1; i >= 0; i--) {
+      const t = clean(links[i].textContent);
+      if (links[i] !== nameEl && !links[i].contains(nameEl) && t && !/\d/.test(t)) return t;
+    }
+    return '';
   }
 
   function termFromHeader(a) {
-    var td = a.closest('td');
-    var table = td && td.closest('table');
+    const td = a.closest('td');
+    const table = td && td.closest('table');
     if (!table || !table.tHead) return '';
-    var ths = table.tHead.querySelectorAll('th');
-    var th = ths[td.cellIndex];
+    const th = table.tHead.querySelectorAll('th')[td.cellIndex];
     return th ? clean(th.textContent) : '';
   }
 
   function studentName(doc) {
-    var el = doc.querySelector('#sf_StudentLabel, .sf_StudentLabel, #studentName, .studentName');
-    if (el && clean(el.textContent)) return clean(el.textContent);
-    var title = doc.querySelector('[id^="grid_stuGradesGrid"]');
-    var header = title && title.closest('div') && title.closest('div').querySelector('h2, .sf_heading');
-    return header ? clean(header.textContent) : '';
+    const el = doc.querySelector('#sf_StudentLabel, .sf_StudentLabel, #studentName, .studentName');
+    return el ? clean(el.textContent) : '';
   }
 
-  // ---------------------------------------------------------------- math
+  function scrapeGrades(doc) {
+    const courses = [];
+    const byKey = {};
+    const terms = [];
 
-  var GPA_POINTS = { A: 4, B: 3, C: 2, D: 1, F: 0 };
+    for (const a of gradeLinks(doc)) {
+      const tr = a.closest('tr');
+      if (!tr) continue;
+      const info = describeRow(tr, gridFor(tr)) ||
+        { name: 'Class ' + (a.getAttribute('data-cni') || courses.length + 1), teacher: '', period: '', time: '' };
+      const key = (a.getAttribute('data-cni') || '') + '|' + info.name + '|' + info.period;
+      let course = byKey[key];
+      if (!course) {
+        course = byKey[key] = Object.assign({ key, grades: {}, links: {} }, info);
+        courses.push(course);
+      }
+      const term = clean(a.getAttribute('data-lit')) || termFromHeader(a) || 'Grade';
+      if (!terms.includes(term)) terms.push(term);
+      const g = parseGrade(a.textContent);
+      if (g.raw) { course.grades[term] = g; course.links[term] = a; }
+    }
+
+    // Classes that are listed but have no grades yet.
+    for (const desc of $$(doc, '.classDesc')) {
+      const row = desc.closest('tr');
+      const info = row && classInfo(row);
+      if (info && !courses.some((c) => c.name === info.name && c.period === info.period)) {
+        courses.push(Object.assign({ key: info.name + '|' + info.period, grades: {}, links: {} }, info));
+      }
+    }
+
+    courses.sort((a, b) => {
+      const pa = parseInt(a.period, 10), pb = parseInt(b.period, 10);
+      if (isNaN(pa) && isNaN(pb)) return a.name.localeCompare(b.name);
+      if (isNaN(pa)) return 1;
+      if (isNaN(pb)) return -1;
+      return pa - pb || a.period.localeCompare(b.period);
+    });
+
+    return { courses, terms, student: studentName(doc), live: doc === document };
+  }
+
+  // ======================================================= generic tables
+
+  // Pulls every data table out of a Skyward page as {title, head, rows}.
+  // Skyward often draws one grid as several tables (a frozen column, a
+  // separate header), so tables in the same grid with matching row counts
+  // are stitched back together.
+  function extractTables(root) {
+    const leaf = $$(root, 'table').filter((t) => !t.querySelector('table'));
+    const parsed = leaf.map((t) => {
+      const rows = Array.from(t.rows).map((r) => ({
+        cells: Array.from(r.cells).map((c) => clean(c.textContent)),
+        th: Array.from(r.cells).every((c) => c.tagName === 'TH'),
+        inHead: !!r.closest('thead')
+      }));
+      let head = [];
+      while (rows.length && (rows[0].inHead || rows[0].th)) head = rows.shift().cells;
+      const body = rows.map((r) => r.cells).filter((cells) => cells.some(Boolean));
+      const grid = t.closest('[id^="grid_"]');
+      return { table: t, grid: grid && grid.id.replace(/_(lockedtable|gradeGrid|header|body).*$/i, ''), head, rows: body };
+    });
+
+    const out = [];
+    for (let i = 0; i < parsed.length; i++) {
+      const p = parsed[i];
+      const prev = out[out.length - 1];
+      if (prev && p.grid && prev.grid === p.grid) {
+        if (!prev.rows.length && !p.head.length) { prev.rows = p.rows; continue; }
+        if (prev.rows.length && prev.rows.length === p.rows.length) {
+          prev.head = prev.head.concat(p.head.length ? p.head : p.rows[0].map(() => ''));
+          prev.rows = prev.rows.map((r, j) => r.concat(p.rows[j]));
+          continue;
+        }
+      }
+      out.push(Object.assign({}, p, { title: tableTitle(p.table) }));
+    }
+    return out.filter((t) => t.rows.length && Math.max(t.head.length, ...t.rows.map((r) => r.length)) >= 2);
+  }
+
+  function tableTitle(table) {
+    if (table.caption) return clean(table.caption.textContent);
+    let node = table;
+    for (let hops = 0; node && hops < 6; hops++) {
+      let sib = node.previousElementSibling;
+      while (sib) {
+        if (/^H[1-4]$/.test(sib.tagName) || /title|heading|header/i.test(sib.className)) {
+          const t = clean(sib.textContent);
+          if (t && t.length < 80) return t;
+        }
+        sib = sib.previousElementSibling;
+      }
+      node = node.parentElement;
+    }
+    return '';
+  }
+
+  // ===================================================== skyward pages
+
+  // Everything in Skyward's own menu, so the app can offer all of it.
+  function findNav() {
+    const seen = {};
+    const out = [];
+    const sel = 'a[data-nav], #sf_navMenu a, .sf_navMenu a, nav a, [id*="navMenu"] a, [class*="navMenu"] a, [id*="sideMenu"] a';
+    for (const a of $$(document, sel)) {
+      const label = clean(a.textContent);
+      const key = label.toLowerCase();
+      if (!label || label.length > 32 || seen[key]) continue;
+      if (/log ?out|sign ?out|exit|help|switch|my account|login history/i.test(label)) continue;
+      seen[key] = true;
+      out.push({ label, el: a });
+    }
+    return out;
+  }
+
+  // Skyward moves between pages by posting a hidden form. To load a page in
+  // the background we click its menu link while catching that form, then
+  // send the same request ourselves and parse the HTML that comes back.
+  function loadSkywardPage(link) {
+    const href = link.getAttribute('href');
+    if (href && !/^\s*(javascript:|#)/i.test(href)) return fetchPage(new URL(href, location.href).href);
+
+    return new Promise((resolve, reject) => {
+      const proto = HTMLFormElement.prototype;
+      const nativeSubmit = proto.submit;
+      const nativeOpen = window.open;
+      let settled = false;
+
+      function restore() {
+        proto.submit = nativeSubmit;
+        window.open = nativeOpen;
+        document.removeEventListener('submit', onSubmit, true);
+      }
+      function settle(start) {
+        if (settled) return;
+        settled = true;
+        restore();
+        start().then(resolve, reject);
+      }
+      function grab(form) {
+        const method = (form.getAttribute('method') || 'get').toUpperCase();
+        const url = new URL(form.getAttribute('action') || location.href, location.href);
+        const body = new URLSearchParams(new FormData(form));
+        if (method === 'GET') { body.forEach((v, k) => url.searchParams.set(k, v)); settle(() => fetchPage(url.href)); }
+        else settle(() => fetchPage(url.href, { method: 'POST', body }));
+      }
+      function onSubmit(e) { e.preventDefault(); e.stopImmediatePropagation(); grab(e.target); }
+
+      proto.submit = function () { grab(this); };
+      window.open = function (u) { settle(() => fetchPage(new URL(u, location.href).href)); return null; };
+      document.addEventListener('submit', onSubmit, true);
+      try { link.click(); } catch (err) { settle(() => Promise.reject(err)); }
+      setTimeout(() => settle(() => Promise.reject(new Error('Skyward did not load this page in the background.'))), 4000);
+    });
+  }
+
+  async function fetchPage(url, opts) {
+    const res = await fetch(url, Object.assign({ credentials: 'include' }, opts));
+    if (!res.ok) throw new Error('Skyward answered ' + res.status);
+    const doc = new DOMParser().parseFromString(await res.text(), 'text/html');
+    if (doc.querySelector('input[type="password"]')) throw new Error('Skyward asked to log in again.');
+    return doc;
+  }
+
+  // =================================================== assignment details
+
+  // Clicking a grade makes Skyward open its own popup with the
+  // assignments. We click it behind the app, read the popup, close it, and
+  // show the assignments in our own panel.
+  async function fetchAssignments(link) {
+    const sel = '.ui-dialog, [role="dialog"], .sf_DialogWrap, [id*="gradeInfo" i], [id*="dialog" i]';
+    const before = new Set($$(document, sel).filter(isVisible));
+    link.click();
+    for (let i = 0; i < 40; i++) {
+      await wait(150);
+      const dlg = $$(document, sel).find((d) => isVisible(d) && !before.has(d) && d.querySelector('table td'));
+      if (!dlg || /loading/i.test(clean(dlg.textContent).slice(0, 40))) continue;
+      await wait(150);
+      const titleEl = dlg.querySelector('.ui-dialog-title, .sf_DialogTitle, h1, h2, h3');
+      const result = { title: titleEl ? clean(titleEl.textContent) : '', tables: extractTables(dlg) };
+      // The popup's own title bar isn't a table heading.
+      result.tables.forEach((t) => { if (result.title && t.title.startsWith(result.title)) t.title = ''; });
+      const close = dlg.querySelector('.ui-dialog-titlebar-close, .sf_DialogClose, [title="Close" i], [aria-label="Close" i], button.close, a.close');
+      if (close) close.click(); else dlg.style.display = 'none';
+      $$(document, '.ui-widget-overlay').forEach((o) => { o.style.display = 'none'; });
+      return result;
+    }
+    return null;
+  }
+
+  // ================================================================= math
+
+  const GPA_POINTS = { A: 4, B: 3, C: 2, D: 1, F: 0 };
+  const avg = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
 
   function termStats(courses, term) {
-    var scores = [], points = [];
-    courses.forEach(function (c) {
-      var g = c.grades[term];
-      if (!g) return;
+    const scores = [], points = [];
+    for (const c of courses) {
+      const g = c.grades[term];
+      if (!g) continue;
       if (g.score != null) scores.push(g.score);
       if (g.letter) points.push(GPA_POINTS[g.letter.charAt(0)]);
-    });
-    var avg = scores.length ? scores.reduce(function (a, b) { return a + b; }, 0) / scores.length : null;
-    var gpa = points.length ? points.reduce(function (a, b) { return a + b; }, 0) / points.length : null;
-    return { avg: avg, gpa: gpa, count: scores.length || points.length };
+    }
+    return { avg: avg(scores), gpa: avg(points), count: scores.length || points.length };
   }
 
-  // Default to the right-most term that most classes have a grade for.
+  // Skyward highlights the current grading period, so look for the one
+  // column whose cells are styled differently from the rest. Otherwise use
+  // the latest quarter-style term (Q2, PR3, T1...) most classes have, and
+  // only then a semester or final column.
   function pickCurrentTerm(data) {
-    var best = data.terms[0], bestCount = -1;
-    data.terms.forEach(function (t) {
-      var n = data.courses.filter(function (c) { return c.grades[t]; }).length;
-      if (n >= bestCount && n >= data.courses.length / 2) { best = t; bestCount = n; }
-    });
-    if (bestCount === -1) {
-      data.terms.forEach(function (t) {
-        var n = data.courses.filter(function (c) { return c.grades[t]; }).length;
-        if (n > bestCount) { best = t; bestCount = n; }
-      });
+    const lit = highlightedTerm(data);
+    if (lit) return lit;
+    const count = (t) => data.courses.filter((c) => c.grades[t]).length;
+    const quarters = data.terms.filter((t) => /^(Q|T|PR|P|MP)\s*\d/i.test(t));
+    for (let i = quarters.length - 1; i >= 0; i--) {
+      if (count(quarters[i]) >= data.courses.length / 2) return quarters[i];
     }
+    let best = data.terms[0], bestCount = -1;
+    for (const t of data.terms) if (count(t) >= bestCount) { best = t; bestCount = count(t); }
     return best;
+  }
+
+  function highlightedTerm(data) {
+    if (!data.live) return null;
+    const looks = {}, counts = {}, marked = new Set();
+    for (const c of data.courses) {
+      for (const t of Object.keys(c.links)) {
+        const a = c.links[t], td = a.closest('td') || a;
+        if (/current|highlight/i.test(td.className + ' ' + a.className)) marked.add(t);
+        const cs = getComputedStyle(td);
+        const look = cs.backgroundColor + '|' + getComputedStyle(a).fontWeight + '|' + cs.borderColor;
+        (looks[t] = looks[t] || []).push(look);
+        counts[look] = (counts[look] || 0) + 1;
+      }
+    }
+    if (marked.size === 1) return [...marked][0];
+    const common = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0];
+    const odd = Object.keys(looks).filter((t) => looks[t].every((l) => l !== common && l === looks[t][0]));
+    return odd.length === 1 ? odd[0] : null;
   }
 
   function tone(g) {
     if (!g) return 'none';
-    var l = g.letter ? g.letter.charAt(0) : letterFor(g.score);
+    const l = g.letter ? g.letter.charAt(0) : letterFor(g.score);
     return ({ A: 'a', B: 'b', C: 'c', D: 'd', F: 'f' })[l] || 'none';
   }
+  const toneOf = (score) => (score == null ? 'none' : tone({ score }));
 
-  function loadSnapshot() {
-    try { return JSON.parse(localStorage.getItem(STORE_KEY) || 'null'); } catch (e) { return null; }
+  // ============================================================= schedule
+
+  function toMinutes(s) {
+    const m = (s || '').match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+    if (!m) return null;
+    let h = parseInt(m[1], 10) % 12;
+    if (/pm/i.test(m[3])) h += 12;
+    return h * 60 + parseInt(m[2], 10);
   }
+
+  function bellSchedule(courses) {
+    return courses.map((c) => {
+      const parts = (c.time || '').split(/\s*-\s*/);
+      return { course: c, start: toMinutes(parts[0]), end: toMinutes(parts[1]) };
+    }).filter((p) => p.start != null && p.end != null).sort((a, b) => a.start - b.start);
+  }
+
+  function nowStatus(bells) {
+    const d = new Date();
+    if (!bells.length) return null;
+    if (d.getDay() === 0 || d.getDay() === 6) return { kind: 'weekend' };
+    const mins = d.getHours() * 60 + d.getMinutes();
+    const cur = bells.find((b) => mins >= b.start && mins < b.end);
+    if (cur) return { kind: 'now', bell: cur, left: cur.end - mins };
+    const next = bells.find((b) => b.start > mins);
+    if (next) return { kind: 'next', bell: next, in: next.start - mins };
+    return { kind: 'done' };
+  }
+
+  const clock = (mins) => {
+    const h = Math.floor(mins / 60), m = mins % 60;
+    return ((h + 11) % 12 + 1) + ':' + String(m).padStart(2, '0') + (h < 12 ? ' AM' : ' PM');
+  };
+
+  // ============================================================ snapshot
 
   function saveSnapshot(data) {
-    var snap = {};
-    data.courses.forEach(function (c) {
-      snap[c.key] = {};
-      Object.keys(c.grades).forEach(function (t) { snap[c.key][t] = c.grades[t].score; });
-    });
-    try { localStorage.setItem(STORE_KEY, JSON.stringify({ at: Date.now(), grades: snap })); } catch (e) { /* storage blocked */ }
+    const grades = {};
+    for (const c of data.courses) {
+      grades[c.key] = {};
+      for (const t of Object.keys(c.grades)) grades[c.key][t] = c.grades[t].score;
+    }
+    store(SNAP_KEY, { at: Date.now(), grades });
   }
 
-  // ---------------------------------------------------------------- render
+  // ================================================================ boot
 
-  var FLAME = '<svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true"><defs><linearGradient id="sg" x1="0" y1="0" x2="1" y2="1">' +
-    '<stop offset="0" stop-color="#F59E0B"/><stop offset="1" stop-color="#EA580C"/></linearGradient></defs>' +
-    '<path d="M16 3c1 5 8 7.5 8 14.5a8 8 0 0 1-16 0c0-3.5 2.2-5.8 3.4-6.8 0 2.3 1.1 3.4 2.3 3.4 0-4.6 1.1-8 2.3-11.1z" fill="url(#sg)"/></svg>';
-
-
-  var data = scrape(document);
-  if (!data.courses.length) {
-    alert('Skyward Glow: no grades found on this page.\n\nOpen Skyward Family Access → Gradebook first, wait for it to load, then run this again.');
-    return;
-  }
-
-  var previous = loadSnapshot();
-  saveSnapshot(data);
-
-  var state = { term: pickCurrentTerm(data), query: '', sort: 'period', theme: 'dark' };
-  try { state.theme = localStorage.getItem('skywardGlow:theme') || 'dark'; } catch (e) { /* storage blocked */ }
-
-  var host = document.createElement('div');
+  const host = document.createElement('div');
   host.id = HOST_ID;
   host.style.cssText = 'position:fixed;inset:0;z-index:2147483646;';
-  var root = host.attachShadow({ mode: 'open' });
+  const root = host.attachShadow({ mode: 'open' });
   document.body.appendChild(host);
   document.documentElement.style.overflow = 'hidden';
 
-  // Print only the dashboard, not the Skyward page underneath it.
-  var printStyle = document.createElement('style');
+  if (!document.getElementById(HOST_ID + '-font')) {
+    const font = document.createElement('link');
+    font.id = HOST_ID + '-font';
+    font.rel = 'stylesheet';
+    font.href = 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Playfair+Display:ital,wght@0,600;1,500&display=swap';
+    document.head.appendChild(font);
+  }
+
+  // Print only the app, not the Skyward page underneath it.
+  const printStyle = document.createElement('style');
   printStyle.id = HOST_ID + '-print';
-  printStyle.textContent = '@media print{body>*:not(#' + HOST_ID + '){display:none!important}' +
-    '#' + HOST_ID + '{position:static!important}}';
+  printStyle.textContent = '@media print{body>*:not(#' + HOST_ID + '){display:none!important}#' + HOST_ID + '{position:static!important}}';
   document.head.appendChild(printStyle);
 
-  var font = document.createElement('link');
-  font.rel = 'stylesheet';
-  font.href = 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Playfair+Display:ital,wght@0,600;1,500&display=swap';
-  document.head.appendChild(font);
+  const state = {
+    view: 'home',
+    term: null,
+    query: '',
+    sort: 'period',
+    theme: store(THEME_KEY) || 'dark',
+    drawer: null,       // { key, term }
+    pages: {},          // label -> { status, tables, error }
+    assignments: {}     // key|term -> { status, result }
+  };
 
   root.innerHTML = '<style>' + CSS() + '</style><div class="app" data-theme="' + state.theme + '"></div>';
-  var app = root.querySelector('.app');
-  app.classList.add('intro');
-  setTimeout(function () { app.classList.remove('intro'); }, 900);
+  const app = root.querySelector('.app');
+  app.innerHTML = '<div class="boot"><span class="flame big">' + ICON.flame + '</span><p>Reading Skyward…</p></div>';
 
-  function esc(s) {
-    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
-      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
-    });
-  }
+  const nav = findNav();
+  const navFor = (re) => nav.find((n) => re.test(n.label));
 
-  function fmt(n, digits) { return n == null ? '—' : n.toFixed(digits == null ? 1 : digits); }
-
-  function delta(course, term) {
-    if (!previous || !previous.grades[course.key]) return null;
-    var before = previous.grades[course.key][term];
-    var g = course.grades[term];
-    if (before == null || !g || g.score == null) return null;
-    var d = g.score - before;
-    return Math.abs(d) < 0.05 ? null : d;
-  }
-
-  function ring(g) {
-    var pct = g && g.score != null ? Math.max(0, Math.min(100, g.score)) : 0;
-    var r = 30, c = 2 * Math.PI * r;
-    return '<svg class="ring" viewBox="0 0 72 72" aria-hidden="true">' +
-      '<circle cx="36" cy="36" r="' + r + '" class="ring-track"/>' +
-      '<circle cx="36" cy="36" r="' + r + '" class="ring-fill" stroke-dasharray="' + c + '" stroke-dashoffset="' + (c * (1 - pct / 100)) + '"/>' +
-      '</svg>';
-  }
-
-  function sparkline(course) {
-    var pts = data.terms.map(function (t) { return course.grades[t] ? course.grades[t].score : null; });
-    var vals = pts.filter(function (v) { return v != null; });
-    if (vals.length < 2) return '';
-    var min = Math.min.apply(null, vals.concat([70])), max = Math.max.apply(null, vals.concat([100]));
-    var w = 120, h = 28, step = w / (pts.length - 1 || 1);
-    var d = '', started = false;
-    pts.forEach(function (v, i) {
-      if (v == null) return;
-      var y = h - ((v - min) / (max - min || 1)) * h;
-      d += (started ? 'L' : 'M') + (i * step).toFixed(1) + ' ' + y.toFixed(1);
-      started = true;
-    });
-    return '<svg class="spark" viewBox="-2 -2 ' + (w + 4) + ' ' + (h + 4) + '" preserveAspectRatio="none" aria-hidden="true"><path d="' + d + '"/></svg>';
-  }
-
-  function sortedCourses() {
-    var q = state.query.toLowerCase();
-    var list = data.courses.filter(function (c) {
-      return !q || (c.name + ' ' + c.teacher + ' period ' + c.period).toLowerCase().indexOf(q) !== -1;
-    });
-    if (state.sort === 'grade-low' || state.sort === 'grade-high') {
-      var dir = state.sort === 'grade-low' ? 1 : -1;
-      list = list.slice().sort(function (a, b) {
-        var ga = a.grades[state.term], gb = b.grades[state.term];
-        var sa = ga && ga.score != null ? ga.score : (dir === 1 ? 999 : -1);
-        var sb = gb && gb.score != null ? gb.score : (dir === 1 ? 999 : -1);
-        return (sa - sb) * dir;
-      });
+  let data = scrapeGrades(document);
+  if (!data.courses.length) {
+    const gb = navFor(/grade ?book/i);
+    if (gb) {
+      try { data = scrapeGrades(await loadSkywardPage(gb.el)); } catch (e) { /* stays empty; Grades shows how to fix it */ }
     }
-    return list;
   }
+  const previous = store(SNAP_KEY);
+  if (data.courses.length) saveSnapshot(data);
+  state.term = data.terms.length ? pickCurrentTerm(data) : null;
+  const bells = bellSchedule(data.courses);
+
+  const VIEWS = [
+    { id: 'home', label: 'Home', icon: 'home' },
+    { id: 'grades', label: 'Grades', icon: 'grades' },
+    { id: 'schedule', label: 'Schedule', icon: 'clock' },
+    { id: 'attendance', label: 'Attendance', icon: 'check' },
+    { id: 'more', label: 'More', icon: 'grid' }
+  ];
+  const attendanceNav = navFor(/attendance/i);
+  const scheduleNav = navFor(/schedule/i);
+  const moreNav = nav.filter((n) => !/grade ?book|attendance|^home$/i.test(n.label));
+
+  // ============================================================== render
 
   function render() {
-    var stats = termStats(data.courses, state.term);
-    var graded = data.courses.filter(function (c) { return c.grades[state.term] && c.grades[state.term].score != null; });
-    var best = graded.slice().sort(function (a, b) { return b.grades[state.term].score - a.grades[state.term].score; })[0];
-    var watch = graded.filter(function (c) { return c.grades[state.term].score < 80; }).length;
-    var hour = new Date().getHours();
-    var hello = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
-    var first = data.student ? data.student.split(/[\s,]+/).filter(Boolean)[data.student.indexOf(',') > -1 ? 1 : 0] : '';
-
+    app.dataset.theme = state.theme;
+    const student = data.student ? displayName(data.student) : '';
     app.innerHTML =
-      '<div class="glow"></div>' +
-      '<header class="top">' +
-        '<div class="brand"><span class="flame">' + FLAME + '</span><span>Skyward <em>Glow</em></span></div>' +
-        '<div class="actions">' +
-          '<button class="btn ghost" data-act="theme" title="Toggle light / dark">' + (state.theme === 'dark' ? '☀︎' : '☾') + '</button>' +
-          '<button class="btn ghost" data-act="print" title="Print a report">Print</button>' +
-          '<button class="btn" data-act="close" title="Back to plain Skyward (Esc)">Original</button>' +
-        '</div>' +
-      '</header>' +
-      '<main>' +
-        '<section class="hero">' +
-          '<p class="eyebrow">' + esc(new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })) + '</p>' +
-          '<h1>' + hello + (first ? ', <em>' + esc(titleCase(first)) + '</em>' : '') + '.</h1>' +
-          '<p class="sub">Here\'s where you stand in <strong>' + esc(state.term) + '</strong>.</p>' +
-        '</section>' +
-        '<section class="stats">' +
-          stat('Average', fmt(stats.avg), stats.avg != null ? letterFor(stats.avg) : '', 'tone-' + tone(stats.avg != null ? { score: stats.avg } : null)) +
-          stat('Unweighted GPA', fmt(stats.gpa, 2), 'estimate', '') +
-          stat('Top class', best ? fmt(best.grades[state.term].score, 0) : '—', best ? best.name : '', '') +
-          stat('Below 80', String(watch), watch ? 'worth a look' : 'all clear', watch ? 'tone-c' : 'tone-a') +
-        '</section>' +
-        '<section class="toolbar">' +
-          '<div class="tabs" role="tablist">' + data.terms.map(function (t) {
-            return '<button role="tab" class="tab' + (t === state.term ? ' on' : '') + '" data-term="' + esc(t) + '">' + esc(t) + '</button>';
-          }).join('') + '</div>' +
-          '<div class="filters">' +
-            '<input class="search" type="search" placeholder="Search classes or teachers" value="' + esc(state.query) + '">' +
-            '<select class="sort">' +
-              opt('period', 'By period') + opt('grade-low', 'Lowest first') + opt('grade-high', 'Highest first') +
-            '</select>' +
+      '<div class="ambient"></div>' +
+      '<aside class="side">' +
+        '<div class="brand"><span class="flame">' + ICON.flame + '</span><span>Skyward <em>Glow</em></span></div>' +
+        '<nav class="nav">' + VIEWS.map(navButton).join('') + '</nav>' +
+        '<div class="side-foot">' +
+          (student ? '<div class="who"><span class="avatar">' + esc(student.charAt(0)) + '</span><span><b>' + esc(student) + '</b><small>Family Access</small></span></div>' : '') +
+          '<div class="side-actions">' +
+            iconButton('theme', state.theme === 'dark' ? 'sun' : 'moon', 'Light / dark') +
+            iconButton('report', 'flag', 'Report a problem') +
+            iconButton('print', 'print', 'Print') +
           '</div>' +
-        '</section>' +
-        '<section class="grid">' + sortedCourses().map(card).join('') + '</section>' +
-        '<footer class="foot">Read from this Skyward page only — nothing leaves your browser. ' +
-          (previous ? 'Changes are compared to ' + esc(new Date(previous.at).toLocaleString()) + '. ' : '') +
-          'GPA is an unweighted estimate. Click a grade to open Skyward\'s assignment details.</footer>' +
-      '</main>';
+          '<button class="btn ghost wide" data-act="close" title="Back to plain Skyward (Esc)">' + ICON.exit + ' Original Skyward</button>' +
+        '</div>' +
+      '</aside>' +
+      '<header class="mtop"><div class="brand"><span class="flame">' + ICON.flame + '</span><span>Skyward <em>Glow</em></span></div>' +
+        '<div class="mtop-actions">' + iconButton('theme', state.theme === 'dark' ? 'sun' : 'moon', 'Light / dark') +
+        iconButton('report', 'flag', 'Report a problem') + iconButton('close', 'exit', 'Original Skyward') + '</div></header>' +
+      '<main class="main"><div class="view">' + renderView() + '</div></main>' +
+      '<nav class="tabbar">' + VIEWS.map(navButton).join('') + '</nav>' +
+      (state.drawer ? renderDrawer() : '');
+    afterRender();
   }
 
-  function opt(v, label) { return '<option value="' + v + '"' + (state.sort === v ? ' selected' : '') + '>' + label + '</option>'; }
+  function displayName(raw) {
+    const parts = raw.split(',');
+    const first = parts.length > 1 ? clean(parts[1]).split(' ')[0] : clean(raw).split(' ')[0];
+    return titleCase(first);
+  }
+
+  function navButton(v) {
+    const on = state.view === v.id || (v.id === 'more' && state.view.startsWith('page:'));
+    return '<button class="nav-item' + (on ? ' on' : '') + '" data-view="' + v.id + '">' + ICON[v.icon] + '<span>' + v.label + '</span></button>';
+  }
+
+  function iconButton(act, icon, title) {
+    return '<button class="icon-btn" data-act="' + act + '" title="' + esc(title) + '" aria-label="' + esc(title) + '">' + ICON[icon] + '</button>';
+  }
+
+  function renderView() {
+    if (state.view === 'home') return homeView();
+    if (state.view === 'grades') return gradesView();
+    if (state.view === 'schedule') return scheduleView();
+    if (state.view === 'attendance') return pageView(attendanceNav, 'Attendance', 'Absences, tardies and check-ins from Skyward.');
+    if (state.view === 'more') return moreView();
+    if (state.view.startsWith('page:')) {
+      const label = state.view.slice(5);
+      return pageView(nav.find((n) => n.label === label), label, '');
+    }
+    return '';
+  }
+
+  // ---------------------------------------------------------------- home
+
+  function homeView() {
+    const hour = new Date().getHours();
+    const hello = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+    const name = data.student ? displayName(data.student) : '';
+    const s = state.term ? termStats(data.courses, state.term) : { avg: null, gpa: null };
+    const graded = data.courses.filter((c) => c.grades[state.term] && c.grades[state.term].score != null);
+    const attention = graded.filter((c) => c.grades[state.term].score < 80)
+      .sort((a, b) => a.grades[state.term].score - b.grades[state.term].score);
+    const changes = recentChanges();
+    const status = nowStatus(bells);
+
+    return '<section class="hero">' +
+        '<p class="eyebrow">' + esc(new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })) + '</p>' +
+        '<h1>' + hello + (name ? ', <em>' + esc(name) + '</em>' : '') + '.</h1>' +
+        (state.term ? '<p class="sub">Here\'s where you stand in <strong>' + esc(state.term) + '</strong>.</p>' : '<p class="sub">Open your Skyward Gradebook to see your grades here.</p>') +
+      '</section>' +
+      (data.courses.length ? statsRow(s, graded, attention) : '') +
+      '<section class="home-grid">' +
+        nowCard(status) +
+        '<div class="panel"><div class="panel-head"><h3>Needs attention</h3><button class="link" data-view="grades">All grades →</button></div>' +
+          (attention.length ? '<ul class="rows">' + attention.map((c) => courseRow(c)).join('') + '</ul>'
+            : '<p class="empty">' + (graded.length ? 'Every class is at 80 or above. Nice work.' : 'No grades yet for this term.') + '</p>') +
+        '</div>' +
+        '<div class="panel"><div class="panel-head"><h3>What changed</h3>' +
+          (previous ? '<small>since ' + esc(new Date(previous.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })) + '</small>' : '') + '</div>' +
+          (changes.length ? '<ul class="rows">' + changes.map(changeRow).join('') + '</ul>'
+            : '<p class="empty">' + (previous ? 'No grade changes since your last visit.' : 'Changes will show up here next time you open Glow.') + '</p>') +
+        '</div>' +
+        (data.courses.length ? overviewChart(graded) : '') +
+      '</section>';
+  }
+
+  function statsRow(s, graded, attention) {
+    const best = graded.slice().sort((a, b) => b.grades[state.term].score - a.grades[state.term].score)[0];
+    return '<section class="stats">' +
+      stat('Average', fmt(s.avg), s.avg != null ? letterFor(s.avg) + ' overall' : '', 'tone-' + toneOf(s.avg)) +
+      stat('GPA', fmt(s.gpa, 2), 'unweighted estimate', '') +
+      stat('Top class', best ? fmt(best.grades[state.term].score, 0) : '—', best ? best.name : '', best ? 'tone-' + tone(best.grades[state.term]) : '') +
+      stat('Below 80', String(attention.length), attention.length ? 'worth a look' : 'all clear', attention.length ? 'tone-c' : 'tone-a') +
+      '</section>';
+  }
 
   function stat(label, value, note, cls) {
     return '<div class="stat ' + cls + '"><span class="label">' + esc(label) + '</span><span class="value">' + esc(value) +
       '</span><span class="note">' + esc(note) + '</span></div>';
   }
 
+  function nowCard(status) {
+    if (!status) return '';
+    let big = '', small = '', course = null;
+    if (status.kind === 'now') { course = status.bell.course; big = course.name; small = 'Happening now · ' + status.left + ' min left, ends ' + clock(status.bell.end); }
+    if (status.kind === 'next') { course = status.bell.course; big = course.name; small = 'Up next · starts ' + clock(status.bell.start) + ' (in ' + status.in + ' min)'; }
+    if (status.kind === 'done') { big = 'School\'s out'; small = 'Your last class ended at ' + clock(bells[bells.length - 1].end) + '.'; }
+    if (status.kind === 'weekend') { big = 'It\'s the weekend'; small = 'First bell Monday at ' + clock(bells[0].start) + '.'; }
+    const g = course && course.grades[state.term];
+    return '<div class="panel now tone-' + tone(g) + '">' +
+      '<div class="panel-head"><h3>' + (status.kind === 'now' ? '<span class="pulse"></span>Right now' : 'Today') + '</h3><button class="link" data-view="schedule">Schedule →</button></div>' +
+      '<p class="now-big">' + esc(big) + '</p><p class="now-small">' + esc(small) + '</p>' +
+      (course ? '<p class="now-meta">' + esc([course.period && 'Period ' + course.period, course.teacher].filter(Boolean).join(' · ')) +
+        (g ? ' · <b>' + esc(g.raw) + '</b>' : '') + '</p>' : '') +
+      '</div>';
+  }
+
+  function courseRow(c) {
+    const g = c.grades[state.term];
+    return '<li><button class="row tone-' + tone(g) + '" data-course="' + esc(c.key) + '">' +
+      '<span class="dot"></span><span class="row-main"><b>' + esc(c.name) + '</b><small>' + esc(c.teacher || ('Period ' + c.period)) + '</small></span>' +
+      '<span class="row-score">' + (g ? esc(g.score != null ? Math.round(g.score) : g.raw) : '—') + '</span></button></li>';
+  }
+
+  function recentChanges() {
+    if (!previous) return [];
+    const out = [];
+    for (const c of data.courses) {
+      const before = previous.grades[c.key];
+      if (!before) continue;
+      for (const t of data.terms) {
+        const g = c.grades[t];
+        if (g && g.score != null && before[t] != null && Math.abs(g.score - before[t]) >= 0.05) out.push({ c, t, from: before[t], to: g.score });
+      }
+    }
+    return out.sort((a, b) => Math.abs(b.to - b.from) - Math.abs(a.to - a.from)).slice(0, 6);
+  }
+
+  function changeRow(ch) {
+    const up = ch.to > ch.from;
+    return '<li><button class="row tone-' + toneOf(ch.to) + '" data-course="' + esc(ch.c.key) + '" data-t="' + esc(ch.t) + '">' +
+      '<span class="dot"></span><span class="row-main"><b>' + esc(ch.c.name) + '</b><small>' + esc(ch.t) + ' · ' + fmt(ch.from, 0) + ' → ' + fmt(ch.to, 0) + '</small></span>' +
+      '<span class="delta ' + (up ? 'up' : 'down') + '">' + (up ? '▲ +' : '▼ ') + Math.abs(ch.to - ch.from).toFixed(1) + '</span></button></li>';
+  }
+
+  function overviewChart(graded) {
+    if (!graded.length) return '';
+    return '<div class="panel span2"><div class="panel-head"><h3>' + esc(state.term) + ' at a glance</h3><small>out of 100</small></div>' +
+      '<div class="bars">' + graded.map((c) => {
+        const v = Math.max(0, Math.min(100, c.grades[state.term].score));
+        return '<button class="bar tone-' + tone(c.grades[state.term]) + '" data-course="' + esc(c.key) + '" title="' + esc(c.name + ': ' + c.grades[state.term].raw) + '">' +
+          '<span class="bar-label">' + esc(c.name) + '</span><span class="bar-track"><span class="bar-fill" style="width:' + v + '%"></span></span>' +
+          '<span class="bar-val">' + Math.round(c.grades[state.term].score) + '</span></button>';
+      }).join('') + '</div></div>';
+  }
+
+  // -------------------------------------------------------------- grades
+
+  function gradesView() {
+    if (!data.courses.length) {
+      return header('Grades', '') + '<div class="panel empty-state"><h3>No grades found</h3>' +
+        '<p>Open <b>Gradebook</b> in Skyward, wait for it to load, then run Skyward Glow again.</p>' +
+        '<p>Already on the Gradebook and still seeing this? Click the flag button and send the report.</p></div>';
+    }
+    const s = termStats(data.courses, state.term);
+    return header('Grades', 'Click a class to see its assignments.') +
+      '<section class="toolbar">' +
+        '<div class="tabs" role="tablist">' + data.terms.map((t) =>
+          '<button role="tab" class="tab' + (t === state.term ? ' on' : '') + '" data-term="' + esc(t) + '">' + esc(t) + '</button>').join('') + '</div>' +
+        '<div class="filters">' +
+          '<input class="search" type="search" placeholder="Search classes or teachers" value="' + esc(state.query) + '">' +
+          '<select class="sort">' + opt('period', 'By period') + opt('grade-low', 'Lowest first') + opt('grade-high', 'Highest first') + '</select>' +
+        '</div>' +
+      '</section>' +
+      '<p class="term-summary">' + esc(state.term) + ' average <b class="tone-text-' + toneOf(s.avg) + '">' + fmt(s.avg) + '</b> · GPA <b>' + fmt(s.gpa, 2) + '</b> <span>(unweighted estimate)</span></p>' +
+      '<section class="grid">' + gradeCards() + '</section>';
+  }
+
+  function header(title, sub) {
+    return '<section class="page-head"><h1>' + esc(title) + '</h1>' + (sub ? '<p class="sub">' + esc(sub) + '</p>' : '') + '</section>';
+  }
+
+  function opt(v, label) { return '<option value="' + v + '"' + (state.sort === v ? ' selected' : '') + '>' + label + '</option>'; }
+
+  function gradeCards() {
+    const q = state.query.toLowerCase();
+    let list = data.courses.filter((c) => !q || (c.name + ' ' + c.teacher + ' period ' + c.period).toLowerCase().includes(q));
+    if (state.sort !== 'period') {
+      const dir = state.sort === 'grade-low' ? 1 : -1;
+      const val = (c) => (c.grades[state.term] && c.grades[state.term].score != null ? c.grades[state.term].score : dir * 999);
+      list = list.slice().sort((a, b) => (val(a) - val(b)) * dir);
+    }
+    if (!list.length) return '<p class="empty">No classes match “' + esc(state.query) + '”.</p>';
+    return list.map(card).join('');
+  }
+
   function card(c) {
-    var g = c.grades[state.term];
-    var d = delta(c, state.term);
-    var t = tone(g);
-    return '<article class="card tone-' + t + '">' +
+    const g = c.grades[state.term];
+    const before = previous && previous.grades[c.key] && previous.grades[c.key][state.term];
+    const d = g && g.score != null && before != null && Math.abs(g.score - before) >= 0.05 ? g.score - before : null;
+    return '<article class="card tone-' + tone(g) + '" data-course="' + esc(c.key) + '" tabindex="0">' +
       '<div class="card-top">' +
         '<div class="meta">' +
           (c.period ? '<span class="period">Period ' + esc(c.period) + (c.time ? ' · ' + esc(c.time) : '') + '</span>' : '') +
           '<h2>' + esc(c.name) + '</h2>' +
           (c.teacher ? '<p class="teacher">' + esc(c.teacher) + '</p>' : '') +
         '</div>' +
-        '<button class="score" data-open="' + esc(c.key) + '" data-t="' + esc(state.term) + '"' + (g ? '' : ' disabled') + ' title="' + (g ? 'Open assignment details' : 'No grade yet') + '">' +
-          ring(g) +
+        '<div class="score">' + ring(g, 72) +
           '<span class="num">' + (g ? esc(g.score != null ? Math.round(g.score) : g.raw) : '—') + '</span>' +
-          '<span class="let">' + (g && g.letter ? esc(g.letter) : '') + '</span>' +
-        '</button>' +
+          '<span class="let">' + (g && g.letter ? esc(g.letter) : '') + '</span></div>' +
       '</div>' +
-      (d != null ? '<p class="delta ' + (d > 0 ? 'up' : 'down') + '">' + (d > 0 ? '▲ +' : '▼ ') + d.toFixed(1) + ' since last check</p>' : '') +
-      '<div class="terms">' + data.terms.map(function (term) {
-        var tg = c.grades[term];
-        return '<button class="chip tone-' + tone(tg) + (term === state.term ? ' on' : '') + '" data-open="' + esc(c.key) + '" data-t="' + esc(term) + '"' + (tg ? '' : ' disabled') + '>' +
-          '<span>' + esc(term) + '</span><b>' + (tg ? esc(tg.score != null ? Math.round(tg.score) : tg.raw) : '·') + '</b></button>';
+      (d != null ? '<p class="delta ' + (d > 0 ? 'up' : 'down') + '">' + (d > 0 ? '▲ +' : '▼ ') + Math.abs(d).toFixed(1) + ' since last check</p>' : '') +
+      '<div class="terms">' + data.terms.map((t) => {
+        const tg = c.grades[t];
+        return '<span class="chip tone-' + tone(tg) + (t === state.term ? ' on' : '') + '"><span>' + esc(t) + '</span><b>' +
+          (tg ? esc(tg.score != null ? Math.round(tg.score) : tg.raw) : '·') + '</b></span>';
       }).join('') + '</div>' +
       sparkline(c) +
     '</article>';
   }
 
-  // ---------------------------------------------------------------- events
+  function ring(g, size) {
+    const pct = g && g.score != null ? Math.max(0, Math.min(100, g.score)) : 0;
+    const r = size / 2 - 6, circ = 2 * Math.PI * r, mid = size / 2;
+    return '<svg class="ring" viewBox="0 0 ' + size + ' ' + size + '" aria-hidden="true">' +
+      '<circle cx="' + mid + '" cy="' + mid + '" r="' + r + '" class="ring-track"/>' +
+      '<circle cx="' + mid + '" cy="' + mid + '" r="' + r + '" class="ring-fill" stroke-dasharray="' + circ + '" stroke-dashoffset="' + (circ * (1 - pct / 100)) + '"/></svg>';
+  }
 
-  app.addEventListener('click', function (e) {
-    var el = e.target.closest('button');
-    if (!el || el.disabled) return;
-    if (el.dataset.term) { state.term = el.dataset.term; render(); return; }
-    if (el.dataset.open) { openDetails(el.dataset.open, el.dataset.t); return; }
-    var act = el.dataset.act;
-    if (act === 'close') close();
-    if (act === 'print') window.print();
-    if (act === 'theme') {
-      state.theme = state.theme === 'dark' ? 'light' : 'dark';
-      app.dataset.theme = state.theme;
-      try { localStorage.setItem('skywardGlow:theme', state.theme); } catch (err) { /* storage blocked */ }
+  function sparkline(c) {
+    const pts = data.terms.map((t) => (c.grades[t] ? c.grades[t].score : null));
+    const vals = pts.filter((v) => v != null);
+    if (vals.length < 2) return '';
+    const min = Math.min(...vals, 70), max = Math.max(...vals, 100);
+    const w = 120, h = 28, step = w / (pts.length - 1 || 1);
+    let d = '', started = false;
+    pts.forEach((v, i) => {
+      if (v == null) return;
+      d += (started ? 'L' : 'M') + (i * step).toFixed(1) + ' ' + (h - ((v - min) / (max - min || 1)) * h).toFixed(1);
+      started = true;
+    });
+    return '<svg class="spark" viewBox="-2 -2 ' + (w + 4) + ' ' + (h + 4) + '" preserveAspectRatio="none" aria-hidden="true"><path d="' + d + '"/></svg>';
+  }
+
+  // -------------------------------------------------------------- drawer
+
+  function renderDrawer() {
+    const c = data.courses.find((x) => x.key === state.drawer.key);
+    if (!c) return '';
+    const term = state.drawer.term;
+    const g = c.grades[term];
+    const a = state.assignments[c.key + '|' + term];
+    let body;
+    if (!g) body = '<p class="empty">No grade posted for ' + esc(term) + ' yet.</p>';
+    else if (!c.links[term] || !data.live) body = '<p class="empty">Assignment details are only available when Glow is started on the Gradebook page.</p>';
+    else if (!a || a.status === 'loading') body = '<div class="loading"><span class="spinner"></span>Loading assignments from Skyward…</div>';
+    else if (a.status === 'ok') body = assignmentsHtml(a.result);
+    else body = '<p class="empty">Couldn\'t read the assignment list here.</p>';
+
+    return '<div class="scrim" data-act="drawer-close"></div>' +
+      '<aside class="drawer tone-' + tone(g) + '" role="dialog" aria-label="' + esc(c.name) + '">' +
+        '<div class="drawer-head">' +
+          '<div><span class="period">' + esc([c.period && 'Period ' + c.period, c.time].filter(Boolean).join(' · ')) + '</span>' +
+          '<h2>' + esc(c.name) + '</h2><p class="teacher">' + esc(c.teacher) + '</p></div>' +
+          '<button class="icon-btn" data-act="drawer-close" aria-label="Close">' + ICON.x + '</button>' +
+        '</div>' +
+        '<div class="drawer-score"><div class="score big">' + ring(g, 112) + '<span class="num">' + (g ? esc(g.score != null ? Math.round(g.score) : g.raw) : '—') +
+          '</span><span class="let">' + (g && g.letter ? esc(g.letter) : '') + '</span></div>' +
+          '<div class="terms">' + data.terms.map((t) => {
+            const tg = c.grades[t];
+            return '<button class="chip tone-' + tone(tg) + (t === term ? ' on' : '') + '" data-dterm="' + esc(t) + '"><span>' + esc(t) + '</span><b>' +
+              (tg ? esc(tg.score != null ? Math.round(tg.score) : tg.raw) : '·') + '</b></button>';
+          }).join('') + '</div></div>' +
+        '<div class="drawer-body"><h3>' + esc(term) + ' assignments</h3>' + body + '</div>' +
+        (c.links[term] && data.live ? '<div class="drawer-foot"><button class="btn ghost wide" data-act="skyward-details">' + ICON.exit + ' Open this in Skyward</button></div>' : '') +
+      '</aside>';
+  }
+
+  function assignmentsHtml(result) {
+    if (!result.tables.length) return '<p class="empty">No assignments listed.</p>';
+    return result.tables.map((t) => {
+      const head = t.head.map((h) => h.toLowerCase());
+      const col = (re) => head.findIndex((h) => re.test(h));
+      const nameCol = col(/assign|description|name/);
+      if (nameCol === -1) return tableHtml(t);
+      const dueCol = col(/due|date/);
+      const scoreCol = col(/score|points|pts|grade|mark/);
+      return (t.title ? '<h4>' + esc(t.title) + '</h4>' : '') + '<ul class="assignments">' + t.rows.map((r) => {
+        if (r.filter(Boolean).length === 1 || r.length < Math.min(3, t.head.length)) {
+          return '<li class="cat">' + esc(r.filter(Boolean).join(' · ')) + '</li>';
+        }
+        const score = scoreCol > -1 ? r[scoreCol] : r.slice(nameCol + 1).find((x) => /\d/.test(x)) || '';
+        const pct = scorePercent(score, r);
+        const missing = /missing|\*|incomplete/i.test(r.join(' '));
+        return '<li class="asg tone-' + (missing ? 'f' : toneOf(pct)) + '">' +
+          '<span class="asg-main"><b>' + esc(r[nameCol] || r.find(Boolean)) + '</b><small>' + esc(dueCol > -1 ? r[dueCol] : '') + (missing ? ' · Missing' : '') + '</small></span>' +
+          '<span class="asg-score">' + esc(score || '—') + (pct != null ? '<small>' + Math.round(pct) + '%</small>' : '') + '</span></li>';
+      }).join('') + '</ul>';
+    }).join('');
+  }
+
+  function scorePercent(score, row) {
+    const m = (score || '').match(/(\d+(?:\.\d+)?)\s*(?:\/|out of)\s*(\d+(?:\.\d+)?)/i);
+    if (m && parseFloat(m[2]) > 0) return (parseFloat(m[1]) / parseFloat(m[2])) * 100;
+    const pctCell = row.find((x) => /^\d+(\.\d+)?\s*%$/.test(x));
+    if (pctCell) return parseFloat(pctCell);
+    return null;
+  }
+
+  async function openDrawer(key, term) {
+    const c = data.courses.find((x) => x.key === key);
+    if (!c) return;
+    state.drawer = { key, term: term || state.term };
+    render();
+    loadAssignments(c, state.drawer.term);
+  }
+
+  async function loadAssignments(c, term) {
+    const id = c.key + '|' + term;
+    const link = c.links[term];
+    if (!link || !data.live || state.assignments[id]) return;
+    state.assignments[id] = { status: 'loading' };
+    let result = null;
+    try { result = await fetchAssignments(link); } catch (e) { result = null; }
+    state.assignments[id] = result ? { status: 'ok', result } : { status: 'error' };
+    if (state.drawer && state.drawer.key === c.key && state.drawer.term === term) render();
+  }
+
+  // ------------------------------------------------------------ schedule
+
+  function scheduleView() {
+    const status = nowStatus(bells);
+    const cur = status && status.kind === 'now' ? status.bell : null;
+    const mins = new Date().getHours() * 60 + new Date().getMinutes();
+    let html = header('Schedule', bells.length ? 'Your bell schedule, from the class times in Skyward.' : '');
+    if (bells.length) {
+      html += '<ol class="timeline">' + bells.map((b) => {
+        const g = b.course.grades[state.term];
+        const past = status && status.kind !== 'weekend' && mins >= b.end;
+        const pct = b === cur ? Math.round(((mins - b.start) / (b.end - b.start)) * 100) : 0;
+        return '<li class="slot tone-' + tone(g) + (b === cur ? ' current' : '') + (past ? ' past' : '') + '">' +
+          '<div class="slot-time"><b>' + clock(b.start) + '</b><small>' + clock(b.end) + '</small></div>' +
+          '<button class="slot-card" data-course="' + esc(b.course.key) + '">' +
+            '<span class="period">Period ' + esc(b.course.period) + (b === cur ? ' · now' : '') + '</span>' +
+            '<b>' + esc(b.course.name) + '</b><small>' + esc(b.course.teacher) + '</small>' +
+            (b === cur ? '<span class="progress"><span style="width:' + pct + '%"></span></span>' : '') +
+            (g ? '<span class="slot-grade">' + esc(g.raw) + '</span>' : '') +
+          '</button></li>';
+      }).join('') + '</ol>';
+    } else if (data.courses.length) {
+      html += '<p class="empty">Skyward didn\'t list class times on the gradebook.</p>';
+    }
+    if (scheduleNav) {
+      html += '<div class="section-gap"></div>' + pageBlock(scheduleNav, 'Full schedule from Skyward');
+    }
+    return html;
+  }
+
+  // ------------------------------------------------------- skyward pages
+
+  function moreView() {
+    let html = header('More', 'Everything else in your Skyward menu, redesigned.');
+    if (!moreNav.length) return html + '<p class="empty">Couldn\'t find Skyward\'s menu on this page.</p>';
+    return html + '<section class="tiles">' + moreNav.map((n) =>
+      '<button class="tile" data-page="' + esc(n.label) + '"><span class="tile-icon">' + ICON[iconFor(n.label)] + '</span><b>' + esc(n.label) + '</b>' + ICON.arrow + '</button>').join('') +
+      '</section>';
+  }
+
+  function iconFor(label) {
+    if (/calendar/i.test(label)) return 'calendar';
+    if (/schedule/i.test(label)) return 'clock';
+    if (/food|lunch|meal/i.test(label)) return 'food';
+    if (/fee|pay|money/i.test(label)) return 'money';
+    if (/test|score|history|portfolio|report/i.test(label)) return 'grades';
+    if (/info|student|health|contact/i.test(label)) return 'user';
+    if (/message|mail|skylert|notif/i.test(label)) return 'mail';
+    return 'doc';
+  }
+
+  function pageView(entry, title, sub) {
+    let html = header(title, sub);
+    if (state.view.startsWith('page:')) html = '<button class="link back" data-view="more">← More</button>' + html;
+    if (!entry) return html + '<p class="empty">This Skyward doesn\'t have a “' + esc(title) + '” page in its menu.</p>';
+    return html + pageBlock(entry, '');
+  }
+
+  function pageBlock(entry, title) {
+    const p = state.pages[entry.label];
+    if (!p) { setTimeout(() => loadPage(entry), 0); }
+    let body;
+    if (!p || p.status === 'loading') body = '<div class="loading"><span class="spinner"></span>Loading ' + esc(entry.label) + ' from Skyward…</div>';
+    else if (p.status === 'error') {
+      body = '<div class="panel empty-state"><h3>Couldn\'t load this page here</h3><p>' + esc(p.error) + '</p>' +
+        '<button class="btn" data-skyward="' + esc(entry.label) + '">Open it in Skyward</button></div>';
+    } else if (!p.tables.length) {
+      body = '<div class="panel empty-state"><h3>Nothing to show</h3><p>Skyward\'s ' + esc(entry.label) + ' page has no tables to redesign' +
+        (p.text ? ':</p><p class="quote">' + esc(p.text) + '</p>' : '.</p>') +
+        '<button class="btn ghost" data-skyward="' + esc(entry.label) + '">Open it in Skyward</button></div>';
+    } else {
+      body = (/attendance/i.test(entry.label) ? attendanceSummary(p.tables) : '') +
+        p.tables.map(tableHtml).join('') +
+        '<p class="foot-note"><button class="link" data-skyward="' + esc(entry.label) + '">Open the original in Skyward →</button></p>';
+    }
+    return (title ? '<h3 class="block-title">' + esc(title) + '</h3>' : '') + body;
+  }
+
+  async function loadPage(entry) {
+    if (state.pages[entry.label]) return;
+    state.pages[entry.label] = { status: 'loading' };
+    try {
+      const doc = await loadSkywardPage(entry.el);
+      const main = doc.querySelector('#sf_ContentArea, .sf_ContentArea, #contentArea, main, #content') || doc.body;
+      $$(main, 'script, style, noscript').forEach((n) => n.remove());
+      state.pages[entry.label] = {
+        status: 'ok',
+        tables: extractTables(main),
+        text: clean(main.textContent).slice(0, 400),
+        html: main.innerHTML
+      };
+    } catch (e) {
+      state.pages[entry.label] = { status: 'error', error: e.message };
+    }
+    const v = state.view;
+    if (v === 'attendance' || v === 'schedule' || v === 'page:' + entry.label) renderViewOnly();
+  }
+
+  function attendanceSummary(tables) {
+    const counts = {};
+    let total = 0;
+    for (const t of tables) {
+      const i = t.head.findIndex((h) => /attendance|type|reason|code|description/i.test(h));
+      if (i === -1) continue;
+      for (const r of t.rows) {
+        const v = clean(r[i]);
+        if (!v) continue;
+        counts[v] = (counts[v] || 0) + 1;
+        total++;
+      }
+    }
+    const keys = Object.keys(counts).sort((a, b) => counts[b] - counts[a]).slice(0, 4);
+    if (!keys.length) return '';
+    return '<section class="stats">' + stat('Entries', String(total), 'this year', '') +
+      keys.map((k) => stat(k, String(counts[k]), counts[k] === 1 ? 'time' : 'times', /tard/i.test(k) ? 'tone-c' : /absen|unexcused|truan/i.test(k) ? 'tone-f' : '')).join('') +
+      '</section>';
+  }
+
+  function tableHtml(t) {
+    const width = Math.max(t.head.length, ...t.rows.map((r) => r.length));
+    const head = t.head.length ? t.head : [];
+    return '<div class="table-card">' + (t.title ? '<h3>' + esc(t.title) + '</h3>' : '') +
+      '<div class="table-scroll"><table>' +
+      (head.some(Boolean) ? '<thead><tr>' + head.map((h) => '<th>' + esc(h) + '</th>').join('') + '</tr></thead>' : '') +
+      '<tbody>' + t.rows.map((r) => {
+        if (r.length === 1 && width > 2) return '<tr class="group"><td colspan="' + width + '">' + esc(r[0]) + '</td></tr>';
+        return '<tr>' + r.map((cell, i) => '<td>' + cellHtml(cell, head[i]) + '</td>').join('') + '</tr>';
+      }).join('') + '</tbody></table></div></div>';
+  }
+
+  function cellHtml(v, heading) {
+    if (/^(tardy|late)/i.test(v)) return '<span class="pill tone-c">' + esc(v) + '</span>';
+    if (/^(absent|unexcused|truant)/i.test(v)) return '<span class="pill tone-f">' + esc(v) + '</span>';
+    if (/^(excused|present|school related)/i.test(v)) return '<span class="pill tone-b">' + esc(v) + '</span>';
+    if (/grade|score|percent|avg|mark/i.test(heading || '') && /^\d+(\.\d+)?$/.test(v) && parseFloat(v) <= 100) return '<span class="num-cell tone-text-' + toneOf(parseFloat(v)) + '">' + esc(v) + '</span>';
+    return esc(v);
+  }
+
+  // ============================================================== events
+
+  function renderViewOnly() {
+    const view = root.querySelector('.view');
+    if (!view) return render();
+    view.innerHTML = renderView();
+    afterRender();
+  }
+
+  function afterRender() {
+    root.querySelectorAll('.nav-item').forEach((b) => {
+      const v = b.dataset.view;
+      b.classList.toggle('on', state.view === v || (v === 'more' && state.view.startsWith('page:')));
+    });
+  }
+
+  function go(view) {
+    state.view = view;
+    state.drawer = null;
+    render();
+    const main = root.querySelector('.main');
+    if (main) main.scrollTop = 0;
+  }
+
+  app.addEventListener('click', (e) => {
+    const el = e.target.closest('button, [data-course], [data-act]');
+    if (!el) return;
+    const ds = el.dataset;
+    if (ds.view) return go(ds.view);
+    if (ds.page) return go('page:' + ds.page);
+    if (ds.term) { state.term = ds.term; return renderViewOnly(); }
+    if (ds.dterm) {
+      state.drawer.term = ds.dterm;
       render();
+      return loadAssignments(data.courses.find((c) => c.key === state.drawer.key), ds.dterm);
+    }
+    if (ds.course) return openDrawer(ds.course, ds.t);
+    if (ds.skyward) return openInSkyward(nav.find((n) => n.label === ds.skyward).el);
+    switch (ds.act) {
+      case 'close': return teardown();
+      case 'print': return window.print();
+      case 'report': return report();
+      case 'drawer-close': state.drawer = null; return render();
+      case 'skyward-details': {
+        const c = data.courses.find((x) => x.key === state.drawer.key);
+        return openInSkyward(c.links[state.drawer.term]);
+      }
+      case 'theme':
+        state.theme = state.theme === 'dark' ? 'light' : 'dark';
+        store(THEME_KEY, state.theme);
+        return render();
     }
   });
 
-  app.addEventListener('input', function (e) {
+  app.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target.dataset && e.target.dataset.course) openDrawer(e.target.dataset.course);
+  });
+
+  app.addEventListener('input', (e) => {
     if (!e.target.classList.contains('search')) return;
     state.query = e.target.value;
-    var pos = e.target.selectionStart;
-    render();
-    var box = root.querySelector('.search');
-    box.focus();
-    box.setSelectionRange(pos, pos);
+    const grid = root.querySelector('.grid');
+    if (grid) grid.innerHTML = gradeCards();
   });
 
-  app.addEventListener('change', function (e) {
-    if (e.target.classList.contains('sort')) { state.sort = e.target.value; render(); }
+  app.addEventListener('change', (e) => {
+    if (e.target.classList.contains('sort')) { state.sort = e.target.value; renderViewOnly(); }
   });
 
-  function onKey(e) { if (e.key === 'Escape' && host.style.display !== 'none') close(); }
+  function onKey(e) {
+    if (e.key !== 'Escape' || host.style.display === 'none') return;
+    if (state.drawer) { state.drawer = null; render(); } else teardown();
+  }
   document.addEventListener('keydown', onKey);
 
-  function close() {
-    host.remove();
-    printStyle.remove();
-    removeBackPill();
-    document.removeEventListener('keydown', onKey);
-    document.documentElement.style.overflow = '';
-  }
-
-  // Skyward's own assignment popup is the most reliable way to see
-  // details, so hide the dashboard, click the real grade link, and leave
-  // a pill to come back.
-  function openDetails(key, term) {
-    var course = data.courses.filter(function (c) { return c.key === key; })[0];
-    var link = course && course.links[term];
-    if (!link || !document.contains(link)) return;
+  // Hide the app and use the real Skyward link, with a pill to come back.
+  function openInSkyward(el) {
+    if (!el || !document.contains(el)) return;
     host.style.display = 'none';
     document.documentElement.style.overflow = '';
-    link.click();
     showBackPill();
+    el.click();
   }
 
   function showBackPill() {
     removeBackPill();
-    var pill = document.createElement('button');
+    const pill = document.createElement('button');
     pill.id = HOST_ID + '-back';
     pill.textContent = '✦ Back to Glow';
     pill.style.cssText = 'position:fixed;right:20px;bottom:20px;z-index:2147483647;padding:12px 18px;border:0;border-radius:999px;' +
       'font:600 14px Inter,system-ui,sans-serif;color:#0A0A0A;background:linear-gradient(135deg,#F59E0B,#EA580C);' +
       'box-shadow:0 10px 30px rgba(234,88,12,.45);cursor:pointer;';
-    pill.onclick = function () {
+    pill.onclick = () => {
       removeBackPill();
       host.style.display = '';
       document.documentElement.style.overflow = 'hidden';
@@ -472,92 +1068,343 @@
   }
 
   function removeBackPill() {
-    var p = document.getElementById(HOST_ID + '-back');
+    const p = document.getElementById(HOST_ID + '-back');
     if (p) p.remove();
+  }
+
+  function teardown() {
+    const h = document.getElementById(HOST_ID);
+    if (h) h.remove();
+    const ps = document.getElementById(HOST_ID + '-print');
+    if (ps) ps.remove();
+    removeBackPill();
+    document.documentElement.style.overflow = '';
+    if (typeof onKey === 'function') document.removeEventListener('keydown', onKey);
+  }
+
+  // Copies what the app read plus the relevant Skyward HTML (styles and
+  // scripts stripped), so a district with a different layout can be fixed.
+  function report() {
+    const first = gradeLinks(document)[0];
+    let html = '';
+    if (state.view.startsWith('page:') || state.view === 'attendance') {
+      const label = state.view === 'attendance' ? attendanceNav && attendanceNav.label : state.view.slice(5);
+      html = (state.pages[label] && state.pages[label].html) || '';
+    } else if (first) {
+      const grid = gridFor(first.closest('tr')).cloneNode(true);
+      $$(grid, 'script, style').forEach((n) => n.remove());
+      $$(grid, '[style]').forEach((n) => n.removeAttribute('style'));
+      html = grid.outerHTML;
+    }
+    const text = 'Skyward Glow report\nView: ' + state.view + '\nTerms: ' + data.terms.join(', ') + '\nPicked: ' + state.term +
+      '\nMenu: ' + nav.map((n) => n.label).join(', ') + '\n' +
+      data.courses.map((c) => c.name + ' | period ' + c.period + ' | ' + c.teacher + ' | ' +
+        data.terms.map((t) => t + '=' + (c.grades[t] ? c.grades[t].raw : '-')).join(' ')).join('\n') +
+      '\n\n' + html.replace(/\s+/g, ' ').slice(0, 60000);
+
+    const panel = document.createElement('div');
+    panel.className = 'report';
+    panel.innerHTML = '<div class="report-box"><h2>Report a problem</h2>' +
+      '<p>This is what Skyward Glow read from this page. Copy it and send it to whoever is fixing the script.</p>' +
+      '<textarea readonly></textarea><div class="report-actions"><button class="btn" data-r="copy">Copy</button>' +
+      '<button class="btn ghost" data-r="close">Close</button></div></div>';
+    const box = panel.querySelector('textarea');
+    box.value = text;
+    panel.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const r = e.target.dataset && e.target.dataset.r;
+      if (r === 'close' || e.target === panel) panel.remove();
+      if (r === 'copy') {
+        box.select();
+        const done = () => { e.target.textContent = 'Copied!'; };
+        if (navigator.clipboard) navigator.clipboard.writeText(text).then(done, () => { document.execCommand('copy'); done(); });
+        else { document.execCommand('copy'); done(); }
+      }
+    });
+    app.appendChild(panel);
   }
 
   render();
 
-  // ---------------------------------------------------------------- style
+  // =============================================================== icons
+
+  function ICONS() {
+    let flameCount = 0;
+    const i = (d) => '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + d + '</svg>';
+    return {
+      // A getter so every flame gets its own gradient id; a shared id
+      // breaks when the first copy sits in a hidden sidebar.
+      get flame() {
+        const id = 'sg' + (flameCount++);
+        return '<svg viewBox="0 0 32 32" width="24" height="24" aria-hidden="true"><defs><linearGradient id="' + id + '" x1="0" y1="0" x2="1" y2="1">' +
+          '<stop offset="0" stop-color="#FBBF24"/><stop offset="1" stop-color="#EA580C"/></linearGradient></defs>' +
+          '<path d="M16 3c1 5 8 7.5 8 14.5a8 8 0 0 1-16 0c0-3.5 2.2-5.8 3.4-6.8 0 2.3 1.1 3.4 2.3 3.4 0-4.6 1.1-8 2.3-11.1z" fill="url(#' + id + ')"/></svg>';
+      },
+      home: i('<path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/>'),
+      grades: i('<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>'),
+      clock: i('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
+      check: i('<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M8 2v4M16 2v4M3 10h18M9 15l2 2 4-4"/>'),
+      calendar: i('<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M8 2v4M16 2v4M3 10h18"/>'),
+      grid: i('<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>'),
+      sun: i('<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>'),
+      moon: i('<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>'),
+      flag: i('<path d="M4 22V4M4 4h13l-2 4 2 4H4"/>'),
+      print: i('<path d="M6 9V3h12v6M6 18H4a1 1 0 0 1-1-1v-6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6a1 1 0 0 1-1 1h-2M6 14h12v7H6z"/>'),
+      exit: i('<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l-5-5 5-5M5 12h12"/>'),
+      x: i('<path d="M18 6 6 18M6 6l12 12"/>'),
+      arrow: i('<path d="M5 12h14M13 6l6 6-6 6"/>'),
+      food: i('<path d="M7 2v20M4 2v6a3 3 0 0 0 6 0V2M17 2c-2 2-3 5-3 8h3v12"/>'),
+      money: i('<rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/>'),
+      user: i('<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>'),
+      mail: i('<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>'),
+      doc: i('<path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/>')
+    };
+  }
+
+  // ================================================================= css
 
   function CSS() {
-    return [
-      ':host{all:initial}',
-      '*{box-sizing:border-box;margin:0}',
-      '.app{--bg:#0A0A0A;--surface:#141414;--surface2:#1C1C1C;--line:#262626;--text:#EDEDED;--muted:#9A9A9A;--accent:#F59E0B;--accent2:#EA580C;',
-        '--a:#34D399;--b:#60A5FA;--c:#FBBF24;--d:#FB923C;--f:#F87171;--none:#525252;',
-        'position:absolute;inset:0;overflow:auto;background:var(--bg);color:var(--text);font:15px/1.5 Inter,system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}',
-      '.app[data-theme="light"]{--bg:#FAF7F2;--surface:#FFFFFF;--surface2:#F3EEE6;--line:#E7E0D5;--text:#1A1714;--muted:#6B645C;',
-        '--a:#059669;--b:#2563EB;--c:#B45309;--d:#C2410C;--f:#DC2626;--none:#A8A29E}',
-      '.glow{position:fixed;top:-30vh;left:50%;width:90vw;height:60vh;transform:translateX(-50%);pointer-events:none;',
-        'background:radial-gradient(ellipse at center,rgba(245,158,11,.16),rgba(234,88,12,.06) 45%,transparent 70%);filter:blur(10px)}',
-      '.top{position:sticky;top:0;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px clamp(16px,4vw,48px);',
-        'background:color-mix(in srgb,var(--bg) 82%,transparent);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}',
-      '.brand{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:-.01em;font-size:16px}',
-      '.brand em,h1 em{font-family:"Playfair Display",Georgia,serif;font-style:italic;font-weight:500;',
-        'background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;background-clip:text;color:transparent}',
-      '.flame{display:grid;place-items:center}',
-      '.actions{display:flex;gap:8px}',
-      '.btn{font:600 13px Inter,system-ui,sans-serif;padding:8px 14px;border-radius:10px;border:0;cursor:pointer;color:#0A0A0A;',
-        'background:linear-gradient(135deg,var(--accent),var(--accent2));transition:transform .15s,box-shadow .15s}',
-      '.btn:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(234,88,12,.35)}',
-      '.btn.ghost{background:var(--surface);color:var(--text);border:1px solid var(--line)}',
-      '.btn.ghost:hover{box-shadow:none;border-color:var(--accent)}',
-      'main{position:relative;max-width:1200px;margin:0 auto;padding:clamp(24px,5vw,56px) clamp(16px,4vw,48px) 48px}',
-      '.eyebrow{color:var(--accent);font-size:12px;font-weight:600;letter-spacing:.12em;text-transform:uppercase}',
-      'h1{font-family:"Playfair Display",Georgia,serif;font-weight:600;font-size:clamp(30px,5vw,52px);line-height:1.1;letter-spacing:-.02em;margin:10px 0 8px}',
-      '.sub{color:var(--muted);font-size:16px}',
-      '.sub strong{color:var(--text)}',
-      '.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin:32px 0 28px}',
-      '.stat{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:16px 18px;display:flex;flex-direction:column;gap:2px;min-width:0}',
-      '.stat .label{color:var(--muted);font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.08em}',
-      '.stat .value{font-size:32px;font-weight:800;letter-spacing:-.03em;font-variant-numeric:tabular-nums}',
-      '.stat .note{color:var(--muted);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
-      '.stat.tone-a .value{color:var(--a)}.stat.tone-b .value{color:var(--b)}.stat.tone-c .value{color:var(--c)}.stat.tone-d .value{color:var(--d)}.stat.tone-f .value{color:var(--f)}',
-      '.toolbar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px}',
-      '.tabs{display:flex;gap:4px;padding:4px;background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow-x:auto;max-width:100%}',
-      '.tab{font:600 13px Inter,system-ui,sans-serif;padding:7px 12px;border-radius:8px;border:0;background:transparent;color:var(--muted);cursor:pointer;white-space:nowrap}',
-      '.tab:hover{color:var(--text)}',
-      '.tab.on{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#0A0A0A}',
-      '.filters{display:flex;gap:8px;flex:1;justify-content:flex-end;min-width:240px}',
-      '.search,.sort{font:500 14px Inter,system-ui,sans-serif;color:var(--text);background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:8px 12px;outline:none}',
-      '.search{flex:1;max-width:300px;min-width:0}',
-      '.search:focus,.sort:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(245,158,11,.18)}',
-      '.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}',
-      '.card{--tone:var(--none);position:relative;background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:18px;',
-        'display:flex;flex-direction:column;gap:14px;overflow:hidden;transition:transform .2s,border-color .2s}',
-      '.intro .card{animation:rise .4s ease both}',
-      '.card::before{content:"";position:absolute;inset:0 0 auto 0;height:3px;background:var(--tone);opacity:.9}',
-      '.card:hover{transform:translateY(-2px);border-color:color-mix(in srgb,var(--tone) 50%,var(--line))}',
-      '.tone-a{--tone:var(--a)}.tone-b{--tone:var(--b)}.tone-c{--tone:var(--c)}.tone-d{--tone:var(--d)}.tone-f{--tone:var(--f)}.tone-none{--tone:var(--none)}',
-      '.card-top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}',
-      '.meta{min-width:0}',
-      '.period{display:inline-block;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}',
-      'h2{font-size:17px;font-weight:700;letter-spacing:-.01em;margin:4px 0 2px;line-height:1.25}',
-      '.teacher{color:var(--muted);font-size:13px}',
-      '.score{position:relative;flex:none;width:72px;height:72px;border:0;background:none;padding:0;cursor:pointer;color:var(--text);display:grid;place-items:center}',
-      '.score:disabled{cursor:default}',
-      '.ring{position:absolute;inset:0;transform:rotate(-90deg)}',
-      '.ring-track{fill:none;stroke:var(--surface2);stroke-width:6}',
-      '.ring-fill{fill:none;stroke:var(--tone);stroke-width:6;stroke-linecap:round;transition:stroke-dashoffset .8s cubic-bezier(.2,.8,.2,1)}',
-      '.num{position:relative;font-size:22px;font-weight:800;letter-spacing:-.03em;margin-top:-6px;font-variant-numeric:tabular-nums}',
-      '.let{position:absolute;bottom:15px;font-size:11px;font-weight:700;color:var(--tone)}',
-      '.score:not(:disabled):hover .ring-track{stroke:color-mix(in srgb,var(--tone) 25%,var(--surface2))}',
-      '.delta{font-size:12px;font-weight:600;margin-top:-6px}.delta.up{color:var(--a)}.delta.down{color:var(--f)}',
-      '.terms{display:flex;flex-wrap:wrap;gap:6px}',
-      '.chip{font:500 12px Inter,system-ui,sans-serif;display:flex;gap:6px;align-items:center;padding:4px 9px;border-radius:999px;cursor:pointer;',
-        'border:1px solid var(--line);background:var(--surface2);color:var(--muted)}',
-      '.chip b{color:var(--tone);font-weight:700;font-variant-numeric:tabular-nums}',
-      '.chip.on{border-color:var(--tone)}',
-      '.chip:disabled{cursor:default;opacity:.55}',
-      '.chip:not(:disabled):hover{border-color:var(--tone);color:var(--text)}',
-      '.spark{width:100%;height:28px}',
-      '.spark path{fill:none;stroke:var(--tone);stroke-width:2;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke;opacity:.8}',
-      '.foot{margin-top:36px;color:var(--muted);font-size:12px;text-align:center;max-width:640px;margin-left:auto;margin-right:auto}',
-      '@keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}',
-      '@media (prefers-reduced-motion:reduce){.intro .card{animation:none}.ring-fill{transition:none}}',
-      '@media (max-width:600px){.filters{min-width:100%}.search{max-width:none}.grid{grid-template-columns:1fr}}',
-      '@media print{.top,.toolbar,.glow{display:none}.app{position:static;overflow:visible}.card{break-inside:avoid}}'
-    ].join('');
+    return `
+:host{all:initial}
+*{box-sizing:border-box;margin:0}
+button{font:inherit;color:inherit}
+.app{
+  --bg:#09090B;--surface:#131316;--surface2:#1B1B1F;--line:#26262B;--text:#F2F2F3;--muted:#9C9CA4;
+  --accent:#F59E0B;--accent2:#EA580C;--glow:rgba(245,158,11,.14);
+  --a:#34D399;--b:#60A5FA;--c:#FBBF24;--d:#FB923C;--f:#F87171;--none:#52525B;
+  --shadow:0 1px 0 rgba(255,255,255,.04) inset,0 10px 30px -12px rgba(0,0,0,.6);
+  position:absolute;inset:0;display:grid;grid-template-columns:260px 1fr;background:var(--bg);color:var(--text);
+  font:15px/1.5 Inter,system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased;overflow:hidden}
+.app[data-theme="light"]{
+  --bg:#FAF8F5;--surface:#FFFFFF;--surface2:#F3EFE9;--line:#E8E2D9;--text:#1C1917;--muted:#6F6861;--glow:rgba(245,158,11,.18);
+  --a:#059669;--b:#2563EB;--c:#B45309;--d:#C2410C;--f:#DC2626;--none:#A8A29E;
+  --shadow:0 1px 2px rgba(28,25,23,.04),0 8px 24px -12px rgba(28,25,23,.12)}
+.ambient{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+.ambient::before,.ambient::after{content:"";position:absolute;border-radius:50%;filter:blur(80px)}
+.ambient::before{width:60vw;height:50vh;top:-25vh;right:-10vw;background:var(--glow)}
+.ambient::after{width:40vw;height:40vh;bottom:-25vh;left:10vw;background:rgba(234,88,12,.07)}
+.boot{grid-column:1/-1;display:grid;place-items:center;align-content:center;gap:14px;color:var(--muted);font-weight:500}
+.flame{display:grid;place-items:center}
+.flame.big svg{width:56px;height:56px;animation:flicker 1.4s ease-in-out infinite}
+@keyframes flicker{50%{transform:scale(1.08) rotate(-3deg);opacity:.8}}
+
+/* sidebar */
+.side{position:relative;z-index:2;display:flex;flex-direction:column;gap:22px;padding:22px 16px;border-right:1px solid var(--line);
+  background:color-mix(in srgb,var(--surface) 70%,transparent);backdrop-filter:blur(20px)}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:17px;letter-spacing:-.01em;padding:0 8px}
+.brand em,h1 em{font-family:"Playfair Display",Georgia,serif;font-style:italic;font-weight:500;
+  background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;background-clip:text;color:transparent}
+.nav{display:flex;flex-direction:column;gap:2px}
+.nav-item{display:flex;align-items:center;gap:12px;padding:10px 12px;border:0;border-radius:12px;background:none;color:var(--muted);
+  font-weight:600;font-size:14px;cursor:pointer;text-align:left;transition:background .15s,color .15s}
+.nav-item:hover{background:var(--surface2);color:var(--text)}
+.nav-item.on{background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 18%,transparent),color-mix(in srgb,var(--accent2) 10%,transparent));color:var(--text);
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 30%,transparent)}
+.nav-item.on svg{color:var(--accent)}
+.side-foot{margin-top:auto;display:flex;flex-direction:column;gap:12px}
+.who{display:flex;align-items:center;gap:10px;padding:10px;border-radius:14px;background:var(--surface2)}
+.who b{display:block;font-size:14px}.who small{color:var(--muted);font-size:12px}
+.avatar{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;font-weight:800;color:#0A0A0A;background:linear-gradient(135deg,var(--accent),var(--accent2))}
+.side-actions{display:flex;gap:6px}
+.icon-btn{display:grid;place-items:center;width:38px;height:38px;border-radius:11px;border:1px solid var(--line);background:var(--surface);color:var(--muted);cursor:pointer;transition:all .15s}
+.icon-btn:hover{color:var(--text);border-color:var(--accent)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;font:600 14px Inter,system-ui,sans-serif;padding:10px 16px;border-radius:12px;border:0;cursor:pointer;color:#0A0A0A;
+  background:linear-gradient(135deg,var(--accent),var(--accent2));transition:transform .15s,box-shadow .15s}
+.btn:hover{transform:translateY(-1px);box-shadow:0 8px 24px -6px rgba(234,88,12,.5)}
+.btn.ghost{background:var(--surface);color:var(--text);border:1px solid var(--line)}
+.btn.ghost:hover{box-shadow:none;border-color:var(--accent)}
+.btn.wide{width:100%}
+.btn svg{width:16px;height:16px}
+.link{border:0;background:none;color:var(--accent);font-weight:600;font-size:13px;cursor:pointer;padding:0}
+.link:hover{text-decoration:underline}
+.back{margin-bottom:10px}
+
+/* main */
+.main{position:relative;z-index:1;overflow:auto;scroll-behavior:smooth}
+.view{max-width:1180px;margin:0 auto;padding:clamp(24px,4vw,52px) clamp(16px,4vw,48px) 64px;animation:fade .35s ease both}
+@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.mtop,.tabbar{display:none}
+.eyebrow{color:var(--accent);font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase}
+h1{font-family:"Playfair Display",Georgia,serif;font-weight:600;font-size:clamp(32px,5vw,54px);line-height:1.08;letter-spacing:-.02em;margin:10px 0 8px}
+.page-head h1{margin-top:0}
+.sub{color:var(--muted);font-size:16px}.sub strong{color:var(--text)}
+.page-head{margin-bottom:24px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin:30px 0 22px}
+.stat{position:relative;background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:18px;display:flex;flex-direction:column;gap:2px;min-width:0;box-shadow:var(--shadow);overflow:hidden}
+.stat::after{content:"";position:absolute;inset:auto -30% -60% auto;width:120px;height:120px;border-radius:50%;background:var(--tone,transparent);opacity:.08;filter:blur(10px)}
+.stat .label{color:var(--muted);font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em}
+.stat .value{font-size:34px;font-weight:800;letter-spacing:-.035em;font-variant-numeric:tabular-nums;color:var(--tone,var(--text))}
+.stat .note{color:var(--muted);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tone-a{--tone:var(--a)}.tone-b{--tone:var(--b)}.tone-c{--tone:var(--c)}.tone-d{--tone:var(--d)}.tone-f{--tone:var(--f)}.tone-none{--tone:var(--none)}
+.tone-text-a{color:var(--a)}.tone-text-b{color:var(--b)}.tone-text-c{color:var(--c)}.tone-text-d{color:var(--d)}.tone-text-f{color:var(--f)}
+
+/* home */
+.home-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:20px;padding:20px;box-shadow:var(--shadow);min-width:0}
+.span2{grid-column:span 3}
+.panel-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px}
+.panel-head h3{font-size:14px;font-weight:700;display:flex;align-items:center;gap:8px}
+.panel-head small{color:var(--muted);font-size:12px}
+.now{position:relative;overflow:hidden;background:linear-gradient(160deg,color-mix(in srgb,var(--tone) 14%,var(--surface)),var(--surface) 60%)}
+.now-big{font-size:24px;font-weight:800;letter-spacing:-.02em;line-height:1.2}
+.now-small{color:var(--muted);margin-top:6px;font-size:14px}
+.now-meta{margin-top:14px;font-size:13px;color:var(--muted)}.now-meta b{color:var(--tone)}
+.pulse{width:8px;height:8px;border-radius:50%;background:var(--a);box-shadow:0 0 0 0 var(--a);animation:pulse 1.8s infinite}
+@keyframes pulse{70%{box-shadow:0 0 0 8px transparent}100%{box-shadow:0 0 0 0 transparent}}
+.rows{list-style:none;padding:0;display:flex;flex-direction:column;gap:4px}
+.row{width:100%;display:flex;align-items:center;gap:12px;padding:10px;border:0;border-radius:12px;background:none;cursor:pointer;text-align:left}
+.row:hover{background:var(--surface2)}
+.dot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--tone)}
+.row-main{flex:1;min-width:0;display:flex;flex-direction:column}
+.row-main b{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row-main small{color:var(--muted);font-size:12px}
+.row-score{font-weight:800;font-size:18px;color:var(--tone);font-variant-numeric:tabular-nums}
+.empty{color:var(--muted);font-size:14px;padding:6px 0}
+.delta{font-size:12px;font-weight:700;white-space:nowrap}.delta.up{color:var(--a)}.delta.down{color:var(--f)}
+.bars{display:flex;flex-direction:column;gap:8px}
+.bar{display:grid;grid-template-columns:minmax(0,220px) 1fr 40px;align-items:center;gap:14px;border:0;background:none;padding:4px 0;cursor:pointer;text-align:left}
+.bar-label{font-size:13px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bar:hover .bar-label{color:var(--text)}
+.bar-track{height:10px;border-radius:99px;background:var(--surface2);overflow:hidden}
+.bar-fill{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,color-mix(in srgb,var(--tone) 55%,transparent),var(--tone));animation:grow .9s cubic-bezier(.2,.8,.2,1) both}
+@keyframes grow{from{width:0}}
+.bar-val{font-weight:800;text-align:right;color:var(--tone);font-variant-numeric:tabular-nums}
+
+/* grades */
+.toolbar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}
+.tabs{display:flex;gap:4px;padding:4px;background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow-x:auto;max-width:100%}
+.tab{font:600 13px Inter,system-ui,sans-serif;padding:8px 14px;border-radius:10px;border:0;background:transparent;color:var(--muted);cursor:pointer;white-space:nowrap}
+.tab:hover{color:var(--text)}
+.tab.on{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#0A0A0A}
+.filters{display:flex;gap:8px;flex:1;justify-content:flex-end;min-width:240px}
+.search,.sort{font:500 14px Inter,system-ui,sans-serif;color:var(--text);background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:9px 12px;outline:none}
+.search{flex:1;max-width:300px;min-width:0}
+.search:focus,.sort:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 20%,transparent)}
+.term-summary{color:var(--muted);font-size:14px;margin-bottom:18px}.term-summary b{color:var(--text)}.term-summary span{font-size:12px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
+.card{--tone:var(--none);position:relative;background:var(--surface);border:1px solid var(--line);border-radius:20px;padding:18px;display:flex;flex-direction:column;gap:14px;
+  overflow:hidden;cursor:pointer;box-shadow:var(--shadow);transition:transform .2s,border-color .2s;animation:rise .45s ease both;outline:none}
+.card:nth-child(2){animation-delay:.03s}.card:nth-child(3){animation-delay:.06s}.card:nth-child(4){animation-delay:.09s}.card:nth-child(5){animation-delay:.12s}.card:nth-child(n+6){animation-delay:.15s}
+.card::before{content:"";position:absolute;inset:0;background:radial-gradient(400px 120px at 100% 0,color-mix(in srgb,var(--tone) 12%,transparent),transparent);pointer-events:none}
+.card:hover,.card:focus-visible{transform:translateY(-3px);border-color:color-mix(in srgb,var(--tone) 55%,var(--line))}
+@keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+.card-top{position:relative;display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+.meta{min-width:0}
+.period{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
+h2{font-size:17px;font-weight:700;letter-spacing:-.01em;margin:4px 0 2px;line-height:1.25}
+.teacher{color:var(--muted);font-size:13px}
+.score{position:relative;flex:none;width:72px;height:72px;display:grid;place-items:center}
+.score.big{width:112px;height:112px}
+.ring{position:absolute;inset:0;transform:rotate(-90deg)}
+.ring-track{fill:none;stroke:var(--surface2);stroke-width:6}
+.ring-fill{fill:none;stroke:var(--tone);stroke-width:6;stroke-linecap:round;transition:stroke-dashoffset 1s cubic-bezier(.2,.8,.2,1);filter:drop-shadow(0 0 6px color-mix(in srgb,var(--tone) 50%,transparent))}
+.num{position:relative;font-size:22px;font-weight:800;letter-spacing:-.03em;margin-top:-6px;font-variant-numeric:tabular-nums}
+.big .num{font-size:36px;margin-top:-10px}
+.let{position:absolute;bottom:15px;font-size:11px;font-weight:800;color:var(--tone)}
+.big .let{bottom:24px;font-size:13px}
+.card .delta{position:relative;margin-top:-6px}
+.terms{position:relative;display:flex;flex-wrap:wrap;gap:6px}
+.chip{font:500 12px Inter,system-ui,sans-serif;display:inline-flex;gap:6px;align-items:center;padding:4px 10px;border-radius:999px;border:1px solid var(--line);background:var(--surface2);color:var(--muted)}
+button.chip{cursor:pointer}
+.chip b{color:var(--tone);font-weight:800;font-variant-numeric:tabular-nums}
+.chip.on{border-color:var(--tone);color:var(--text)}
+.spark{position:relative;width:100%;height:28px}
+.spark path{fill:none;stroke:var(--tone);stroke-width:2;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke;opacity:.85}
+
+/* drawer */
+.scrim{position:absolute;inset:0;z-index:8;background:rgba(0,0,0,.5);backdrop-filter:blur(3px);animation:fadein .2s ease both}
+@keyframes fadein{from{opacity:0}}
+.drawer{position:absolute;top:0;right:0;bottom:0;z-index:9;width:min(520px,100%);display:flex;flex-direction:column;background:var(--bg);border-left:1px solid var(--line);
+  box-shadow:-30px 0 60px -20px rgba(0,0,0,.5);animation:slide .3s cubic-bezier(.2,.8,.2,1) both}
+@keyframes slide{from{transform:translateX(40px);opacity:0}}
+.drawer-head{display:flex;justify-content:space-between;gap:12px;padding:22px 22px 0}
+.drawer-head h2{font-size:22px}
+.drawer-score{display:flex;align-items:center;gap:18px;padding:18px 22px;border-bottom:1px solid var(--line)}
+.drawer-body{flex:1;overflow:auto;padding:18px 22px}
+.drawer-body h3{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:12px}
+.drawer-body h4{font-size:14px;margin:16px 0 8px}
+.drawer-foot{padding:14px 22px;border-top:1px solid var(--line)}
+.assignments{list-style:none;padding:0;display:flex;flex-direction:column;gap:6px}
+.asg{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:14px;background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--tone)}
+.asg-main{flex:1;min-width:0;display:flex;flex-direction:column}
+.asg-main b{font-size:14px;font-weight:600}
+.asg-main small{color:var(--muted);font-size:12px}
+.asg-score{text-align:right;font-weight:800;font-variant-numeric:tabular-nums;display:flex;flex-direction:column}
+.asg-score small{color:var(--tone);font-size:12px}
+.cat{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--accent);padding:12px 2px 4px}
+.loading{display:flex;align-items:center;gap:12px;color:var(--muted);padding:20px 0}
+.spinner{width:18px;height:18px;border-radius:50%;border:2px solid var(--line);border-top-color:var(--accent);animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* schedule */
+.timeline{list-style:none;padding:0;display:flex;flex-direction:column;gap:10px;position:relative}
+.slot{display:grid;grid-template-columns:90px 1fr;gap:16px;align-items:stretch}
+.slot-time{display:flex;flex-direction:column;align-items:flex-end;padding-top:14px;font-variant-numeric:tabular-nums}
+.slot-time b{font-size:14px}.slot-time small{color:var(--muted);font-size:12px}
+.slot-card{position:relative;display:flex;flex-direction:column;gap:2px;padding:14px 18px;padding-right:90px;border-radius:16px;border:1px solid var(--line);background:var(--surface);cursor:pointer;text-align:left;
+  box-shadow:var(--shadow);border-left:4px solid var(--tone);transition:transform .15s}
+.slot-card:hover{transform:translateX(3px)}
+.slot-card b{font-size:16px}.slot-card small{color:var(--muted);font-size:13px}
+.slot.current .slot-card{background:linear-gradient(120deg,color-mix(in srgb,var(--accent) 16%,var(--surface)),var(--surface));border-color:color-mix(in srgb,var(--accent) 50%,var(--line))}
+.slot.current .period{color:var(--accent)}
+.slot.past{opacity:.55}
+.slot-grade{position:absolute;right:18px;top:50%;transform:translateY(-50%);font-weight:800;font-size:20px;color:var(--tone)}
+.progress{height:4px;border-radius:99px;background:var(--surface2);margin-top:10px;overflow:hidden}
+.progress span{display:block;height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2))}
+.section-gap{height:36px}
+.block-title{font-size:18px;margin-bottom:14px}
+
+/* skyward pages */
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.tile{display:flex;align-items:center;gap:14px;padding:18px;border-radius:18px;border:1px solid var(--line);background:var(--surface);cursor:pointer;text-align:left;box-shadow:var(--shadow);transition:all .15s}
+.tile b{flex:1;font-size:15px}
+.tile>svg{color:var(--muted);transition:transform .15s}
+.tile:hover{border-color:var(--accent)}.tile:hover>svg{transform:translateX(3px);color:var(--accent)}
+.tile-icon{display:grid;place-items:center;width:42px;height:42px;border-radius:12px;color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent)}
+.table-card{background:var(--surface);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow);margin-bottom:14px;overflow:hidden}
+.table-card h3{font-size:15px;padding:16px 18px 0}
+.table-scroll{overflow:auto;max-height:70vh}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th{position:sticky;top:0;background:var(--surface);text-align:left;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);padding:14px 18px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:11px 18px;border-bottom:1px solid var(--line);vertical-align:top}
+tbody tr:last-child td{border-bottom:0}
+tbody tr:hover td{background:var(--surface2)}
+tr.group td{font-weight:700;color:var(--accent);background:color-mix(in srgb,var(--accent) 6%,transparent);font-size:13px}
+.pill{display:inline-block;padding:2px 10px;border-radius:99px;font-size:12px;font-weight:700;color:var(--tone);background:color-mix(in srgb,var(--tone) 14%,transparent)}
+.num-cell{font-weight:700;font-variant-numeric:tabular-nums}
+.empty-state{text-align:center;padding:40px 24px;display:flex;flex-direction:column;align-items:center;gap:10px}
+.empty-state p{color:var(--muted);max-width:440px}
+.quote{font-size:13px;font-style:italic}
+.foot-note{text-align:center;margin-top:10px}
+
+/* report */
+.report{position:absolute;inset:0;z-index:20;display:grid;place-items:center;padding:16px;background:rgba(0,0,0,.6)}
+.report-box{width:min(640px,100%);background:var(--surface);border:1px solid var(--line);border-radius:20px;padding:22px;display:flex;flex-direction:column;gap:12px}
+.report-box p{color:var(--muted);font-size:14px}
+.report-box textarea{width:100%;height:220px;resize:vertical;font:12px ui-monospace,monospace;color:var(--text);background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px}
+.report-actions{display:flex;gap:8px;justify-content:flex-end}
+
+/* mobile */
+@media (max-width:900px){
+  .app{grid-template-columns:1fr;grid-template-rows:auto 1fr auto}
+  .side{display:none}
+  .mtop{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--line);
+    background:color-mix(in srgb,var(--surface) 80%,transparent);backdrop-filter:blur(20px);position:relative;z-index:3}
+  .mtop .brand{padding:0}
+  .mtop-actions{display:flex;gap:6px}
+  .tabbar{display:flex;justify-content:space-around;padding:6px 6px calc(6px + env(safe-area-inset-bottom));border-top:1px solid var(--line);
+    background:color-mix(in srgb,var(--surface) 88%,transparent);backdrop-filter:blur(20px);position:relative;z-index:3}
+  .tabbar .nav-item{flex-direction:column;gap:3px;font-size:11px;padding:6px 4px;flex:1;align-items:center}
+  .tabbar .nav-item.on{background:none;box-shadow:none;color:var(--accent)}
+  .home-grid{grid-template-columns:1fr}
+  .span2{grid-column:auto}
+  .bar{grid-template-columns:minmax(0,120px) 1fr 34px}
+  .filters{min-width:100%}.search{max-width:none}
+  .grid{grid-template-columns:1fr}
+  .slot{grid-template-columns:64px 1fr;gap:10px}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+@media print{.side,.mtop,.tabbar,.toolbar,.ambient,.scrim,.drawer{display:none}.app{position:static;display:block;overflow:visible}.main{overflow:visible}.card{break-inside:avoid;animation:none}}
+`;
   }
 })();

@@ -8,27 +8,67 @@
   <button id="runGlow" style="margin-left:10px;padding:6px 12px;font-weight:bold;cursor:pointer">Run Skyward Glow</button>
   (or paste the code into the console, or click your bookmark)
 </div>
-<div id="sf_StudentLabel">Doe, Jordan A</div>
+<ul id="sf_navMenu" style="float:left;width:150px;list-style:none;padding:0;margin:0 10px 0 0;background:#2d4f73">
+  <li><a data-nav="sfhome01.w" href="javascript:void(0)" style="color:#fff">Home</a></li>
+  <li><a data-nav="sfcalendar001.w" href="javascript:void(0)" style="color:#fff">Calendar</a></li>
+  <li><a data-nav="sfgradebook001.w" href="javascript:void(0)" style="color:#fff">Gradebook</a></li>
+  <li><a data-nav="sfattendance001.w" href="javascript:void(0)" style="color:#fff">Attendance</a></li>
+  <li><a data-nav="sfstudentinfo001.w" href="javascript:void(0)" style="color:#fff">Student Info</a></li>
+  <li><a data-nav="sffoodservice001.w" href="javascript:void(0)" style="color:#fff">Food Service</a></li>
+  <li><a data-nav="sfschedule001.w" href="javascript:void(0)" style="color:#fff">Schedule</a></li>
+  <li><a data-nav="sftestscores001.w" href="javascript:void(0)" style="color:#fff">Test Scores</a></li>
+  <li><a href="javascript:void(0)" style="color:#fff">Logout</a></li>
+</ul>
+<div id="sf_StudentLabel">Test Student</div>
 <div id="grid_stuGradesGrid_12345_2026" class="sf_gridTableWrap"><div class="wrap">
 <table id="grid_stuGradesGrid_12345_2026_gradeGrid_lockedtable"><thead><tr><th>Class</th></tr></thead><tbody id="left"></tbody></table>
 <table id="grid_stuGradesGrid_12345_2026_gradeGrid"><thead><tr id="hdr"></tr></thead><tbody id="right"></tbody></table>
 </div></div>
-<div id="dlg" style="display:none;position:fixed;top:20%;left:30%;background:#fff;border:2px solid #345;padding:20px">Assignment details for <span id="dlgc"></span> <button onclick="this.parentNode.style.display='none'">X</button></div>
+
 <script>
-var terms=['PR1','Q1','PR2','Q2','S1','PR3','Q3'];
+var terms=['Q1','Q2','SM1','SM1 EOC','Q3','Q4','SM2','SM2 EOC','FIN'];
+var CUR=1; // Q2 is highlighted as the current term, like real Skyward
 var classes=[
- ['ENGLISH 2 HONORS','Smith, Alicia','1','7:30 AM - 8:20 AM',[94,92,95,null,null,null,null]],
- ['ALGEBRA 2','Nguyen, Peter','2','8:25 AM - 9:15 AM',[81,78,74,null,null,null,null]],
- ['CHEMISTRY 1 HON','Garcia, Maria','3','9:20 AM - 10:10 AM',[88,90,'89 B+',null,null,null,null]],
- ['AP WORLD HISTORY','Johnson, Mark','4','10:15 AM - 11:05 AM',[97,96,98,null,null,null,null]],
- ['SPANISH 2','Lopez, Ana','5','11:40 AM - 12:30 PM',[65,72,68,null,null,null,null]],
- ['PE/HEALTH','Brown, Tim','6','12:35 PM - 1:25 PM',[100,100,100,null,null,null,null]],
- ['DRAWING 1','Lee, Kim','7','1:30 PM - 2:20 PM',[null,null,null,null,null,null,null]]];
+ ['English 1','Alexandra Santiago','1','7:19 AM-8:16 AM',[89,100,95,null,null,null,null,null,95]],
+ ['Pre-Advanced Placement World History and Geography','Kelsa Gratereaux','2','8:20 AM - 9:10 AM',[83,0,null,null,null,null,null,null,null]],
+ ['Forensic Science 1','Sarah Santiago','3','9:14 AM - 10:04 AM',[95,100,98,null,null,null,null,null,98]],
+ ['Biology 1','Shayna Carr','4B','10:38 AM - 11:28 AM',[98,0,49,null,null,null,null,null,49],'split'],
+ ['Leadership Skills Development','Sofia Vance','5','11:32 AM - 12:22 PM',[90,100,95,null,null,null,null,null,95]],
+ ['Spanish 1','Marlise Linauer','6','12:26 PM-1:16 PM',[90,0,null,null,null,null,null,null,null]],
+ ['Geometry','Colleen Scroggins','7','1:20 PM - 2:10 PM',[90,100,95,null,null,null,null,null,95]]];
 document.getElementById('hdr').innerHTML=terms.map(t=>'<th>'+t+'</th>').join('');
 classes.forEach(function(c,i){
- document.getElementById('left').insertAdjacentHTML('beforeend','<tr><td scope="row"><div class="gb_classDesc"><span class="bld classDesc"><a href="javascript:void(0)">'+c[0]+'</a></span><br><label class="bld">Period</label> '+c[2]+' <span class="fXs">('+c[3]+')</span><br><a href="javascript:void(0)">'+c[1]+'</a></div></td></tr>');
- document.getElementById('right').insertAdjacentHTML('beforeend','<tr>'+c[4].map(function(g,j){return '<td>'+(g==null?'&nbsp;':'<a id="showGradeInfo" href="javascript:void(0)" data-cni="'+(9000+i)+'" data-lit="'+terms[j]+'">'+g+'</a>')+'</td>'}).join('')+'</tr>');
+ var left = c[5]==='split'
+   // Name alone in its cell; period and a plain-text teacher in the next cell.
+   ? '<tr><td scope="row"><span class="bld classDesc"><a href="javascript:void(0)">'+c[0]+'</a></span></td><td>Period '+c[2]+' ('+c[3]+') '+c[1]+'</td></tr>'
+   : '<tr><td scope="row" colspan="2"><div class="gb_classDesc"><span class="bld classDesc"><a href="javascript:void(0)">'+c[0]+'</a></span> <label class="bld">Period</label> '+c[2]+' <span class="fXs">('+c[3]+')</span> <a href="javascript:void(0)">'+c[1]+'</a></div></td></tr>';
+ document.getElementById('left').insertAdjacentHTML('beforeend',left);
+ document.getElementById('right').insertAdjacentHTML('beforeend','<tr>'+c[4].map(function(g,j){return '<td'+(j===CUR?' style="background:#fff3b0"':'')+'>'+(g==null?'&nbsp;':'<a id="showGradeInfo" href="javascript:void(0)" data-cni="'+(9000+i)+'" data-lit="'+terms[j]+'">'+g+'</a>')+'</td>'}).join('')+'</tr>');
 });
-document.addEventListener('click',function(e){var a=e.target.closest('#showGradeInfo');if(!a)return;document.getElementById('dlgc').textContent=a.dataset.cni+' '+a.dataset.lit;document.getElementById('dlg').style.display='block';});
+// Grade click: Skyward-style popup that says "Loading" first, then fills in.
+document.addEventListener('click',function(e){
+  var a=e.target.closest('#showGradeInfo'); if(!a) return;
+  var d=document.createElement('div'); d.className='ui-dialog'; d.style.cssText='position:fixed;top:15%;left:25%;width:50%;background:#fff;border:2px solid #345;padding:10px;z-index:10';
+  d.innerHTML='<div class="ui-dialog-titlebar"><span class="ui-dialog-title">Loading...</span><a class="ui-dialog-titlebar-close" href="#">X</a></div><div class="body">Loading...</div>';
+  document.body.appendChild(d);
+  d.querySelector('.ui-dialog-titlebar-close').onclick=function(ev){ev.preventDefault();d.remove();};
+  setTimeout(function(){
+    var cls=a.closest('tr'); d.querySelector('.ui-dialog-title').textContent='Class Grades: '+a.dataset.lit;
+    d.querySelector('.body').innerHTML='<table><thead><tr><th>Due</th><th>Assignment</th><th>Score</th><th>Points Earned</th></tr></thead><tbody>'+
+      '<tr><td colspan="4"><b>MAJOR GRADES</b> weighted at 60.00%</td></tr>'+
+      '<tr><td>10/02/26</td><td>Unit 2 Test</td><td>88</td><td>44 out of 50</td></tr>'+
+      '<tr><td>10/14/26</td><td>Lab Report: Density</td><td>95</td><td>19 out of 20</td></tr>'+
+      '<tr><td colspan="4"><b>MINOR GRADES</b> weighted at 40.00%</td></tr>'+
+      '<tr><td>10/09/26</td><td>Homework 2.4</td><td>*</td><td>Missing</td></tr>'+
+      '<tr><td>10/16/26</td><td>Quiz 3</td><td>72</td><td>18 out of 25</td></tr></tbody></table>';
+  },500);
+});
+// Skyward navigates by posting a hidden form; this mock uses GET so a static server can answer.
+document.querySelectorAll('#sf_navMenu a[data-nav]').forEach(function(a){
+  a.addEventListener('click',function(){
+    var f=document.createElement('form'); f.method='get'; f.action='pages/'+a.dataset.nav.replace('.w','.html');
+    f.innerHTML='<input type="hidden" name="encses" value="mock123">'; document.body.appendChild(f); f.submit();
+  });
+});
 document.getElementById('runGlow').onclick=function(){var s=document.createElement('script');s.src='../glow.js?'+Date.now();document.body.appendChild(s);};
 </script></body></html>
