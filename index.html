@@ -28,13 +28,14 @@
     .btn[aria-disabled="true"] { opacity:.5; pointer-events:none; }
     kbd { font:600 12px ui-monospace, monospace; background:#1f1f1f; border:1px solid var(--line); border-bottom-width:2px; border-radius:6px; padding:1px 6px; color:var(--text); }
     .note { font-size:13px; margin-top:28px; }
+    .ver { display:inline-block; vertical-align:middle; font:600 13px Inter, system-ui, sans-serif; color:var(--muted); border:1px solid var(--line); border-radius:99px; padding:3px 10px; letter-spacing:.02em; }
     .status { font-size:13px; color:var(--accent); margin-left:10px; }
   </style>
 </head>
 <body>
   <main>
-    <h1>Skyward <em>Glow</em></h1>
-    <p class="lede">A redesigned Skyward. A home screen with what's happening now, grades with every assignment, your schedule as a timeline, attendance, and the rest of Skyward's menu, all in one app. It reads the Skyward you're already logged in to. Nothing gets sent anywhere else.</p>
+    <h1>Skyward <em>Glow</em> <span class="ver" id="ver">loading…</span></h1>
+    <p class="lede">A redesigned Skyward. A home screen with what's happening now, grades with every assignment, your schedule as a timeline, attendance, and the rest of Skyward's menu, all in one app. It reads the Skyward you're already logged in to. Your grades only ever go between your browser and Skyward.</p>
 
     <section class="step">
       <span class="tag">Option A · easiest</span>
@@ -44,6 +45,7 @@
         <li>Drag this button onto the bar:</li>
       </ol>
       <a class="btn" id="bookmarklet" href="#" aria-disabled="true" onclick="return false">✦ Skyward Glow</a>
+      <p class="note" style="margin-top:10px">Updating? Delete your old bookmark first, then drag this one. The app tells you when a new version is out.</p>
       <ol start="3">
         <li>Log in to Skyward, open <strong>Gradebook</strong>, then click the bookmark. (Gradebook works best: that's where your grades and assignments come from.)</li>
       </ol>
@@ -74,7 +76,10 @@
     fetch('glow.js', { cache: 'no-cache' })
       .then(function (r) { if (!r.ok) throw new Error(r.status); return r.text(); })
       .then(function (code) {
+        var version = (code.match(/const VERSION = '([\d.]+)'/) || [])[1] || '?';
+        document.getElementById('ver').textContent = 'v' + version;
         var link = document.getElementById('bookmarklet');
+        link.textContent = '✦ Skyward Glow ' + version;
         link.href = 'javascript:' + encodeURIComponent(code);
         link.removeAttribute('aria-disabled');
         link.onclick = function () { alert('Drag this button to your bookmarks bar, then click it on your Skyward Gradebook page.'); return false; };

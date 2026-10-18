@@ -11,7 +11,9 @@ what Skyward already shows you and draws a new app over it:
 - **Attendance**: tardies and absences with totals.
 - **More**: every other page in Skyward's menu, redesigned.
 
-It only talks to Skyward itself; nothing is sent anywhere else.
+Your grades and info only ever travel between your browser and Skyward. The
+one other request the app makes is reading the version number of the
+published `glow.js` on GitHub, so it can tell you when an update is out.
 
 **Install page:** https://loganwestlake.github.io/betterskyward/
 
@@ -23,6 +25,8 @@ It only talks to Skyward itself; nothing is sent anywhere else.
 | `index.html` | The install page: copy button and bookmark button. |
 | `test/mock-gradebook.html` | A fake Skyward gradebook with made-up grades, for testing. |
 | `test/pages/` | Fake Attendance and Schedule pages the practice gradebook links to. |
+| `test/server.js` | A pretend Skyward server for local testing. |
+| `test/e2e.js` | Automated test of every screen, in a real browser. |
 
 ## How to use it
 
@@ -39,3 +43,25 @@ the page that looks wrong in the app, click the **flag** button (Report a
 problem), click **Copy**, and share what it copied so the script can be
 updated. The report includes your class names and grades, so only send it to
 someone you trust.
+
+## Versions and updates
+
+The version number is at the top of `glow.js` (`const VERSION = ...`). The
+install page and the app (next to the logo, and at the bottom of **More**)
+both show it. When the published version is newer than your bookmark, the app
+shows an **Update** banner: delete the old bookmark and drag the new one from
+the install page.
+
+Bump `VERSION` with every change.
+
+## Testing
+
+```
+npm install     # once, installs Playwright
+npm test        # runs every screen against the pretend Skyward
+npm run serve   # pretend Skyward at http://localhost:8790/test/mock-gradebook.html
+```
+
+Add `?strict=1` to the practice page URL to make its menu ignore background
+clicks. Some real Skyward sites behave that way, and the app then has to load
+pages by posting the session itself.

@@ -1,12 +1,20 @@
 <!doctype html><html><head><meta charset="utf-8"><title>Attendance</title></head><body>
-<!-- Practice copy of a Skyward attendance page (made-up data). -->
+<!-- Practice copy of a Skyward attendance page (made-up data). Like real
+     Skyward, the grid is drawn by script after the page loads, and the page
+     tries to break out of frames. -->
+<script>if (top !== self) { try { top.location = self.location; } catch (e) {} }</script>
 <div id="sf_ContentArea">
 <h2 class="sf_heading">Attendance</h2>
-<div id="grid_attendance_2026"><table>
-<thead><tr><th>Date</th><th>Attendance</th><th>Period</th><th>Classes</th></tr></thead>
-<tbody>
-<tr><td>Thu Oct 15, 2026</td><td>Tardy</td><td>1</td><td>English 1</td></tr>
-<tr><td>Mon Oct 5, 2026</td><td>Excused Absence</td><td>1, 2, 3, 4B, 5, 6, 7</td><td>All classes</td></tr>
-<tr><td>Tue Sep 22, 2026</td><td>Tardy</td><td>4B</td><td>Biology 1</td></tr>
-<tr><td>Fri Sep 11, 2026</td><td>School Related</td><td>5</td><td>Leadership Skills Development</td></tr>
-</tbody></table></div></div></body></html>
+<div id="grid_attendance_2026"></div></div>
+<script>
+setTimeout(function () {
+  var rows = [
+    ['Thu Oct 15, 2026', 'Tardy', '1', 'English 1'],
+    ['Mon Oct 5, 2026', 'Excused Absence', '1, 2, 3, 4B, 5, 6, 7', 'All classes'],
+    ['Tue Sep 22, 2026', 'Tardy', '4B', 'Biology 1'],
+    ['Fri Sep 11, 2026', 'School Related', '5', 'Leadership Skills Development']];
+  document.getElementById('grid_attendance_2026').innerHTML =
+    '<table><thead><tr><th>Date</th><th>Attendance</th><th>Period</th><th>Classes</th></tr></thead><tbody>' +
+    rows.map(function (r) { return '<tr><td>' + r.join('</td><td>') + '</td></tr>'; }).join('') + '</tbody></table>';
+}, 300);
+</script></body></html>

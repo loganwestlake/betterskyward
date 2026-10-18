@@ -19,6 +19,8 @@
   <li><a data-nav="sftestscores001.w" href="javascript:void(0)" style="color:#fff">Test Scores</a></li>
   <li><a href="javascript:void(0)" style="color:#fff">Logout</a></li>
 </ul>
+<!-- Skyward keeps the session in hidden fields like these. -->
+<form id="sf_SessionForm" style="display:none"><input type="hidden" name="encses" value="mock123"><input type="hidden" name="dwd" value="d1"><input type="hidden" name="wfaacl" value="w1"><input type="hidden" name="gridSortState" value="ignore-me"></form>
 <div id="sf_StudentLabel">Test Student</div>
 <div id="grid_stuGradesGrid_12345_2026" class="sf_gridTableWrap"><div class="wrap">
 <table id="grid_stuGradesGrid_12345_2026_gradeGrid_lockedtable"><thead><tr><th>Class</th></tr></thead><tbody id="left"></tbody></table>
@@ -63,12 +65,20 @@ document.addEventListener('click',function(e){
       '<tr><td>10/16/26</td><td>Quiz 3</td><td>72</td><td>18 out of 25</td></tr></tbody></table>';
   },500);
 });
-// Skyward navigates by posting a hidden form; this mock uses GET so a static server can answer.
+// Menu clicks. With ?strict=1 the menu ignores clicks that don't come from
+// a real mouse, like the real Skyward does for some people; the app then has
+// to post the session fields itself. Otherwise each link uses a different
+// way of changing pages so every catch path gets exercised.
+var STRICT = /strict=1/.test(location.search);
 document.querySelectorAll('#sf_navMenu a[data-nav]').forEach(function(a){
-  a.addEventListener('click',function(){
-    var f=document.createElement('form'); f.method='get'; f.action='pages/'+a.dataset.nav.replace('.w','.html');
+  a.addEventListener('click',function(e){
+    if (STRICT && !e.isTrusted) return;
+    var page='pages/'+a.dataset.nav.replace('.w','.html');
+    if (a.dataset.nav==='sfschedule001.w') { location.href=page+'?encses=mock123'; return; }
+    // Like some Skyward links: the session rides in the address itself.
+    if (a.dataset.nav==='sftestscores001.w') { location.href='sftestscores001.w?encses=mock123'; return; }
+    var f=document.createElement('form'); f.method='get'; f.action=page;
     f.innerHTML='<input type="hidden" name="encses" value="mock123">'; document.body.appendChild(f); f.submit();
   });
 });
-document.getElementById('runGlow').onclick=function(){var s=document.createElement('script');s.src='../glow.js?'+Date.now();document.body.appendChild(s);};
 </script></body></html>

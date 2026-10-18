@@ -1,0 +1,12 @@
+{
+  "name": "betterskyward",
+  "private": true,
+  "description": "Skyward Glow: a redesigned Skyward Family Access that runs on top of the real one.",
+  "scripts": {
+    "test": "node --check glow.js && node test/e2e.js",
+    "serve": "node test/server.js"
+  },
+  "devDependencies": {
+    "playwright": "1.56.1"
+  }
+}

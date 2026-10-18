@@ -5,18 +5,37 @@
  * this script from a bookmark or paste it into the browser console
  * (F12 → Console). It reads what Skyward already shows you and draws a new
  * app on top: Home, Grades, Schedule, Attendance and the rest of Skyward's
- * menu. Nothing is sent anywhere except back to Skyward itself.
+ * menu. Your data only goes between the browser and Skyward; the one
+ * other request reads the published version number to offer updates.
  * Run it again (or press Esc / "Original") to get back to plain Skyward.
  */
 (async function () {
   'use strict';
 
+  // Bump on every change. The install page and the app both show it, and
+  // the app compares it with the published copy to offer updates.
+  const VERSION = '2.0.0';
+  const UPDATE_URL = 'https://loganwestlake.github.io/betterskyward/glow.js';
+  const INSTALL_URL = 'https://loganwestlake.github.io/betterskyward/';
+
   const HOST_ID = 'skyward-glow-host';
   const SNAP_KEY = 'skywardGlow:lastSnapshot';
   const THEME_KEY = 'skywardGlow:theme';
 
-  const existing = document.getElementById(HOST_ID);
-  if (existing) { teardown(); return; }
+  // Running it again turns it off. Use the earlier run's own teardown so its
+  // listeners go away too.
+  if (document.getElementById(HOST_ID)) {
+    if (typeof window.__skywardGlowTeardown === 'function') window.__skywardGlowTeardown(); else teardown();
+    return;
+  }
+
+  // The browser's own page-changing methods, saved once so overlapping
+  // background loads can never leave Skyward stuck with our stand-ins.
+  const NATIVE = window.__skywardGlowNatives = window.__skywardGlowNatives || {
+    submit: HTMLFormElement.prototype.submit,
+    requestSubmit: HTMLFormElement.prototype.requestSubmit,
+    open: window.open
+  };
 
   // ================================================================ utils
 
@@ -237,69 +256,262 @@
 
   // ===================================================== skyward pages
 
-  // Everything in Skyward's own menu, so the app can offer all of it.
+  // Everything in Skyward's own menu, so the app can offer all of it. When
+  // a label appears more than once (Skyward has hidden duplicate menus),
+  // keep the visible copy that carries a page name.
   function findNav() {
-    const seen = {};
+    const byKey = {};
     const out = [];
     const sel = 'a[data-nav], #sf_navMenu a, .sf_navMenu a, nav a, [id*="navMenu"] a, [class*="navMenu"] a, [id*="sideMenu"] a';
     for (const a of $$(document, sel)) {
       const label = clean(a.textContent);
       const key = label.toLowerCase();
-      if (!label || label.length > 32 || seen[key]) continue;
+      if (!label || label.length > 32) continue;
       if (/log ?out|sign ?out|exit|help|switch|my account|login history/i.test(label)) continue;
-      seen[key] = true;
-      out.push({ label, el: a });
+      const score = (isVisible(a) ? 2 : 0) + (navTarget(a) ? 1 : 0);
+      if (byKey[key]) {
+        if (score > byKey[key].score) Object.assign(byKey[key], { el: a, score });
+        continue;
+      }
+      byKey[key] = { label, el: a, score };
+      out.push(byKey[key]);
     }
     return out;
   }
 
-  // Skyward moves between pages by posting a hidden form. To load a page in
-  // the background we click its menu link while catching that form, then
-  // send the same request ourselves and parse the HTML that comes back.
-  function loadSkywardPage(link) {
-    const href = link.getAttribute('href');
-    if (href && !/^\s*(javascript:|#)/i.test(href)) return fetchPage(new URL(href, location.href).href);
+  // The Skyward page a menu link points at, e.g. "sfattendance001.w".
+  function navTarget(a) {
+    const href = a.getAttribute('href') || '';
+    if (href && !/^\s*(javascript:|#)/i.test(href)) return href;
+    const named = a.getAttribute('data-nav') || a.getAttribute('data-url') || a.getAttribute('data-href');
+    if (named) return named;
+    const m = (href + ' ' + (a.getAttribute('onclick') || '')).match(/[\w-]+\.w\b/);
+    return m ? m[0] : '';
+  }
 
+  // Skyward keeps the login session in hidden fields on every page and
+  // posts them along when it switches pages. Grid and filter state is
+  // left out so the next page starts fresh. Only names go into reports.
+  function sessionFields() {
+    const out = [];
+    const seen = {};
+    for (const input of $$(document, 'input[type="hidden"][name]')) {
+      const name = input.name;
+      if (seen[name] || input.value.length > 1000 || /grid|sort|filter|search|viewstate/i.test(name)) continue;
+      seen[name] = true;
+      out.push([name, input.value]);
+    }
+    return out;
+  }
+
+  // How the last successful page load worked, so the next one starts there.
+  let preferredLoader = null;
+  const loaderLog = [];
+
+  // Loads a Skyward page in the background and returns { doc, dispose }.
+  // Tries, in order: catching Skyward's own navigation when its menu link
+  // is clicked, and posting the session fields straight to the page. Each
+  // result loads in a hidden frame so Skyward's own scripts can fill in
+  // grids they draw after the page loads.
+  // One load at a time: each one temporarily takes over form submits.
+  let pageQueue = Promise.resolve();
+  function loadSkywardPage(link) {
+    const run = pageQueue.then(() => loadSkywardPageNow(link));
+    pageQueue = run.catch(() => {});
+    return run;
+  }
+
+  async function loadSkywardPageNow(link) {
+    // Skyward sometimes redraws its menu; use the current copy of the link.
+    if (!link.isConnected) {
+      const fresh = findNav().find((n) => n.label === clean(link.textContent));
+      if (fresh) link = fresh.el;
+    }
+    const target = navTarget(link);
+    const attempts = [
+      ['click', async () => {
+        // A real link would just navigate, and only the Navigation API can
+        // cancel that. Without it, don't risk leaving the page.
+        const href = link.getAttribute('href') || '';
+        if (href && !/^\s*(javascript:|#)/i.test(href) && !window.navigation) throw new Error('skipped: browser can\'t catch plain links');
+        const req = await catchNavigation(link);
+        return loadInFrame(req.url, req.fields, req.method);
+      }],
+      ['direct', async () => {
+        if (!target) throw new Error('menu link has no page name');
+        return loadInFrame(new URL(target, location.href).href, sessionFields(), 'POST');
+      }],
+      // Last resort: download the page without running its scripts. Grids
+      // Skyward draws with script will be missing, but plain tables show.
+      ['download', async () => {
+        if (!target) throw new Error('menu link has no page name');
+        const res = await fetch(new URL(target, location.href).href, {
+          method: 'POST', credentials: 'include', body: new URLSearchParams(sessionFields())
+        });
+        if (!res.ok) throw new Error('Skyward answered ' + res.status);
+        const doc = new DOMParser().parseFromString(await res.text(), 'text/html');
+        if (doc.querySelector('input[type="password"]')) throw new Error('Skyward asked to log in again');
+        if (!looksLikeSkyward(doc)) throw new Error('got a page that isn\'t Skyward');
+        return { doc, dispose() {} };
+      }]
+    ];
+    const first = attempts.findIndex((a) => a[0] === preferredLoader);
+    if (first > 0) attempts.unshift(attempts.splice(first, 1)[0]);
+
+    const errors = [];
+    for (const [name, attempt] of attempts) {
+      try {
+        const page = await attempt();
+        preferredLoader = name;
+        loaderLog.push(clean(link.textContent) + ': ' + name + ' worked');
+        return page;
+      } catch (e) {
+        errors.push(name + ': ' + e.message);
+      }
+    }
+    loaderLog.push(clean(link.textContent) + ': ' + errors.join('; '));
+    throw new Error('Skyward wouldn\'t open this page in the background (' + errors.join('; ') + ').');
+  }
+
+  // Clicks a Skyward menu link and catches the page change it starts,
+  // whether that's a form post, a new window, or a plain redirect, then
+  // cancels it so the app stays put.
+  function catchNavigation(link) {
     return new Promise((resolve, reject) => {
       const proto = HTMLFormElement.prototype;
-      const nativeSubmit = proto.submit;
-      const nativeOpen = window.open;
-      let settled = false;
+      const navApi = window.navigation;
+      let done = false;
 
-      function restore() {
-        proto.submit = nativeSubmit;
-        window.open = nativeOpen;
+      function finish(err, req) {
+        if (done) return;
+        done = true;
+        proto.submit = NATIVE.submit;
+        if (NATIVE.requestSubmit) proto.requestSubmit = NATIVE.requestSubmit;
+        window.open = NATIVE.open;
         document.removeEventListener('submit', onSubmit, true);
+        if (navApi) navApi.removeEventListener('navigate', onNavigate);
+        if (err) { catchLateNavigation(); reject(err); } else resolve(req);
       }
-      function settle(start) {
-        if (settled) return;
-        settled = true;
-        restore();
-        start().then(resolve, reject);
-      }
-      function grab(form) {
+      function fromForm(form) {
         const method = (form.getAttribute('method') || 'get').toUpperCase();
-        const url = new URL(form.getAttribute('action') || location.href, location.href);
-        const body = new URLSearchParams(new FormData(form));
-        if (method === 'GET') { body.forEach((v, k) => url.searchParams.set(k, v)); settle(() => fetchPage(url.href)); }
-        else settle(() => fetchPage(url.href, { method: 'POST', body }));
+        const url = new URL(form.getAttribute('action') || location.href, location.href).href;
+        finish(null, { url, method, fields: Array.from(new FormData(form)) });
       }
-      function onSubmit(e) { e.preventDefault(); e.stopImmediatePropagation(); grab(e.target); }
+      function onSubmit(e) { e.preventDefault(); e.stopImmediatePropagation(); fromForm(e.target); }
+      function onNavigate(e) {
+        if (!e.cancelable || e.hashChange || e.downloadRequest) return;
+        e.preventDefault();
+        finish(null, {
+          url: e.destination.url,
+          method: e.formData ? 'POST' : 'GET',
+          fields: e.formData ? Array.from(e.formData) : []
+        });
+      }
 
-      proto.submit = function () { grab(this); };
-      window.open = function (u) { settle(() => fetchPage(new URL(u, location.href).href)); return null; };
+      proto.submit = function () { fromForm(this); };
+      if (NATIVE.requestSubmit) proto.requestSubmit = function () { fromForm(this); };
+      window.open = function (u) { finish(null, { url: new URL(u, location.href).href, method: 'GET', fields: [] }); return null; };
       document.addEventListener('submit', onSubmit, true);
-      try { link.click(); } catch (err) { settle(() => Promise.reject(err)); }
-      setTimeout(() => settle(() => Promise.reject(new Error('Skyward did not load this page in the background.'))), 4000);
+      if (navApi) navApi.addEventListener('navigate', onNavigate);
+
+      try {
+        for (const type of ['mousedown', 'mouseup']) link.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
+        link.click();
+      } catch (err) { finish(err); }
+      setTimeout(() => finish(new Error('clicking the menu did nothing')), 2500);
     });
   }
 
-  async function fetchPage(url, opts) {
-    const res = await fetch(url, Object.assign({ credentials: 'include' }, opts));
-    if (!res.ok) throw new Error('Skyward answered ' + res.status);
-    const doc = new DOMParser().parseFromString(await res.text(), 'text/html');
-    if (doc.querySelector('input[type="password"]')) throw new Error('Skyward asked to log in again.');
-    return doc;
+  // If Skyward reacts to the click only after we gave up (slow network),
+  // its page change would replace the app. Keep cancelling page changes
+  // for a few more seconds while the app is on screen.
+  function catchLateNavigation() {
+    const until = Date.now() + 10000;
+    const appShowing = () => Date.now() < until && host.isConnected && host.style.display !== 'none';
+    const onNavigate = (e) => { if (appShowing() && e.cancelable && !e.hashChange) e.preventDefault(); };
+    const onSubmit = (e) => { if (appShowing()) e.preventDefault(); };
+    if (window.navigation) window.navigation.addEventListener('navigate', onNavigate);
+    document.addEventListener('submit', onSubmit, true);
+    setTimeout(() => {
+      if (window.navigation) window.navigation.removeEventListener('navigate', onNavigate);
+      document.removeEventListener('submit', onSubmit, true);
+    }, 10000);
+  }
+
+  // Posts (or gets) a Skyward page into a hidden, sandboxed frame. The
+  // sandbox stops the page from taking over the window; same-origin access
+  // lets the app read what Skyward drew.
+  function loadInFrame(url, fields, method) {
+    return new Promise((resolve, reject) => {
+      const name = 'skyward-glow-frame-' + Math.random().toString(36).slice(2);
+      const frame = document.createElement('iframe');
+      frame.name = name;
+      frame.setAttribute('sandbox', 'allow-same-origin allow-scripts allow-forms');
+      frame.setAttribute('aria-hidden', 'true');
+      frame.style.cssText = 'position:fixed;left:-12000px;top:0;width:1280px;height:900px;border:0;opacity:0;pointer-events:none;';
+      const dispose = () => frame.remove();
+      let timer = setTimeout(() => { dispose(); reject(new Error('page took too long')); }, 20000);
+
+      frame.addEventListener('load', async function onLoad() {
+        let doc = null;
+        try { doc = frame.contentDocument; } catch (e) { doc = null; }
+        if (doc && doc.URL === 'about:blank') return; // the blank page loads first
+        if (!doc || !doc.body) {
+          // Skyward (or the browser) refused to show the page in a frame.
+          frame.removeEventListener('load', onLoad);
+          clearTimeout(timer);
+          dispose();
+          return reject(new Error('Skyward blocks loading its pages in a frame'));
+        }
+        frame.removeEventListener('load', onLoad);
+        clearTimeout(timer);
+        if (doc.querySelector('input[type="password"]')) { dispose(); return reject(new Error('Skyward asked to log in again')); }
+        if (!looksLikeSkyward(doc)) { dispose(); return reject(new Error('got a page that isn\'t Skyward (' + clean(doc.title || doc.body.textContent).slice(0, 60) + ')')); }
+        await settleTables(doc);
+        resolve({ doc, dispose });
+      });
+      document.body.appendChild(frame);
+
+      if (method === 'GET') {
+        // A GET form would drop the URL's own query string, so load it directly.
+        const u = new URL(url, location.href);
+        for (const [k, v] of fields) if (typeof v === 'string') u.searchParams.set(k, v);
+        frame.src = u.href;
+        return;
+      }
+      const form = document.createElement('form');
+      form.method = 'POST';
+      form.action = url;
+      form.target = name;
+      form.style.display = 'none';
+      for (const [k, v] of fields) {
+        if (typeof v !== 'string') continue; // file fields never matter here
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = k;
+        input.value = v;
+        form.appendChild(input);
+      }
+      document.body.appendChild(form);
+      NATIVE.submit.call(form);
+      form.remove();
+    });
+  }
+
+  function looksLikeSkyward(doc) {
+    return !!doc.querySelector('[id^="sf_"], [class*="sf_"], a[data-nav], [id^="grid_"]') || /skyward/i.test(doc.title);
+  }
+
+  // Skyward draws many grids with script after the page loads. Wait until
+  // the number of table cells stops changing (or a few seconds pass).
+  async function settleTables(doc) {
+    let last = -1;
+    for (let i = 0; i < 20; i++) {
+      const n = doc.querySelectorAll('td').length;
+      if (n > 0 && n === last) return;
+      last = n;
+      await wait(250);
+    }
   }
 
   // =================================================== assignment details
@@ -462,6 +674,7 @@
     sort: 'period',
     theme: store(THEME_KEY) || 'dark',
     drawer: null,       // { key, term }
+    update: null,       // newer published version, if any
     pages: {},          // label -> { status, tables, error }
     assignments: {}     // key|term -> { status, result }
   };
@@ -477,7 +690,11 @@
   if (!data.courses.length) {
     const gb = navFor(/grade ?book/i);
     if (gb) {
-      try { data = scrapeGrades(await loadSkywardPage(gb.el)); } catch (e) { /* stays empty; Grades shows how to fix it */ }
+      try {
+        const page = await loadSkywardPage(gb.el);
+        data = scrapeGrades(page.doc);
+        page.dispose();
+      } catch (e) { /* stays empty; Grades shows how to fix it */ }
     }
   }
   const previous = store(SNAP_KEY);
@@ -504,7 +721,7 @@
     app.innerHTML =
       '<div class="ambient"></div>' +
       '<aside class="side">' +
-        '<div class="brand"><span class="flame">' + ICON.flame + '</span><span>Skyward <em>Glow</em></span></div>' +
+        '<div class="brand"><span class="flame">' + ICON.flame + '</span><span>Skyward <em>Glow</em></span><span class="ver">v' + VERSION + '</span></div>' +
         '<nav class="nav">' + VIEWS.map(navButton).join('') + '</nav>' +
         '<div class="side-foot">' +
           (student ? '<div class="who"><span class="avatar">' + esc(student.charAt(0)) + '</span><span><b>' + esc(student) + '</b><small>Family Access</small></span></div>' : '') +
@@ -516,13 +733,37 @@
           '<button class="btn ghost wide" data-act="close" title="Back to plain Skyward (Esc)">' + ICON.exit + ' Original Skyward</button>' +
         '</div>' +
       '</aside>' +
-      '<header class="mtop"><div class="brand"><span class="flame">' + ICON.flame + '</span><span>Skyward <em>Glow</em></span></div>' +
+      '<header class="mtop"><div class="brand"><span class="flame">' + ICON.flame + '</span><span>Skyward <em>Glow</em></span><span class="ver">v' + VERSION + '</span></div>' +
         '<div class="mtop-actions">' + iconButton('theme', state.theme === 'dark' ? 'sun' : 'moon', 'Light / dark') +
         iconButton('report', 'flag', 'Report a problem') + iconButton('close', 'exit', 'Original Skyward') + '</div></header>' +
-      '<main class="main"><div class="view">' + renderView() + '</div></main>' +
+      '<main class="main">' + updateBanner() + '<div class="view">' + renderView() + '</div></main>' +
       '<nav class="tabbar">' + VIEWS.map(navButton).join('') + '</nav>' +
       (state.drawer ? renderDrawer() : '');
     afterRender();
+  }
+
+  function updateBanner() {
+    if (!state.update) return '';
+    return '<div class="update"><span>' + ICON.flame + '<b>Version ' + esc(state.update) + ' is out.</b> You have ' + VERSION +
+      '. Get the new bookmark from the install page.</span><a class="btn" href="' + INSTALL_URL + '" target="_blank" rel="noopener">Update</a></div>';
+  }
+
+  // Asks the published copy for its version number. Sends nothing about
+  // you; if it fails (offline, blocked) the app just carries on.
+  async function checkForUpdate() {
+    try {
+      const res = await fetch(UPDATE_URL + '?t=' + Date.now(), { cache: 'no-store', credentials: 'omit' });
+      const m = (await res.text()).match(/const VERSION = '([\d.]+)'/);
+      if (m && newer(m[1], VERSION)) { state.update = m[1]; render(); }
+    } catch (e) { /* no update check today */ }
+  }
+
+  function newer(a, b) {
+    const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+      if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0);
+    }
+    return false;
   }
 
   function displayName(raw) {
@@ -818,13 +1059,18 @@
     loadAssignments(c, state.drawer.term);
   }
 
+  // Skyward shows one popup at a time, so lookups wait their turn.
+  let assignmentQueue = Promise.resolve();
+
   async function loadAssignments(c, term) {
     const id = c.key + '|' + term;
     const link = c.links[term];
     if (!link || !data.live || state.assignments[id]) return;
     state.assignments[id] = { status: 'loading' };
     let result = null;
-    try { result = await fetchAssignments(link); } catch (e) { result = null; }
+    const run = assignmentQueue.then(() => fetchAssignments(link));
+    assignmentQueue = run.catch(() => {});
+    try { result = await run; } catch (e) { result = null; }
     state.assignments[id] = result ? { status: 'ok', result } : { status: 'error' };
     if (state.drawer && state.drawer.key === c.key && state.drawer.term === term) render();
   }
@@ -863,10 +1109,11 @@
 
   function moreView() {
     let html = header('More', 'Everything else in your Skyward menu, redesigned.');
-    if (!moreNav.length) return html + '<p class="empty">Couldn\'t find Skyward\'s menu on this page.</p>';
+    const foot = '<p class="version-note">Skyward Glow v' + VERSION + '</p>';
+    if (!moreNav.length) return html + '<p class="empty">Couldn\'t find Skyward\'s menu on this page.</p>' + foot;
     return html + '<section class="tiles">' + moreNav.map((n) =>
       '<button class="tile" data-page="' + esc(n.label) + '"><span class="tile-icon">' + ICON[iconFor(n.label)] + '</span><b>' + esc(n.label) + '</b>' + ICON.arrow + '</button>').join('') +
-      '</section>';
+      '</section>' + foot;
   }
 
   function iconFor(label) {
@@ -911,8 +1158,9 @@
     if (state.pages[entry.label]) return;
     state.pages[entry.label] = { status: 'loading' };
     try {
-      const doc = await loadSkywardPage(entry.el);
-      const main = doc.querySelector('#sf_ContentArea, .sf_ContentArea, #contentArea, main, #content') || doc.body;
+      const page = await loadSkywardPage(entry.el);
+      const main = (page.doc.querySelector('#sf_ContentArea, .sf_ContentArea, #contentArea, main, #content') || page.doc.body).cloneNode(true);
+      page.dispose();
       $$(main, 'script, style, noscript').forEach((n) => n.remove());
       state.pages[entry.label] = {
         status: 'ok',
@@ -943,8 +1191,17 @@
     const keys = Object.keys(counts).sort((a, b) => counts[b] - counts[a]).slice(0, 4);
     if (!keys.length) return '';
     return '<section class="stats">' + stat('Entries', String(total), 'this year', '') +
-      keys.map((k) => stat(k, String(counts[k]), counts[k] === 1 ? 'time' : 'times', /tard/i.test(k) ? 'tone-c' : /absen|unexcused|truan/i.test(k) ? 'tone-f' : '')).join('') +
+      keys.map((k) => stat(k, String(counts[k]), counts[k] === 1 ? 'time' : 'times', attendanceTone(k))).join('') +
       '</section>';
+  }
+
+  // Same colors as the table pills: excused is fine, tardy is a warning,
+  // unexcused or plain absences are red.
+  function attendanceTone(v) {
+    if (/^(excused|present|school related)/i.test(v)) return 'tone-b';
+    if (/tard|late/i.test(v)) return 'tone-c';
+    if (/absen|unexcused|truan/i.test(v)) return 'tone-f';
+    return '';
   }
 
   function tableHtml(t) {
@@ -960,9 +1217,7 @@
   }
 
   function cellHtml(v, heading) {
-    if (/^(tardy|late)/i.test(v)) return '<span class="pill tone-c">' + esc(v) + '</span>';
-    if (/^(absent|unexcused|truant)/i.test(v)) return '<span class="pill tone-f">' + esc(v) + '</span>';
-    if (/^(excused|present|school related)/i.test(v)) return '<span class="pill tone-b">' + esc(v) + '</span>';
+    if (/^(tardy|late|absent|unexcused|truant|excused|present|school related)/i.test(v)) return '<span class="pill ' + attendanceTone(v) + '">' + esc(v) + '</span>';
     if (/grade|score|percent|avg|mark/i.test(heading || '') && /^\d+(\.\d+)?$/.test(v) && parseFloat(v) <= 100) return '<span class="num-cell tone-text-' + toneOf(parseFloat(v)) + '">' + esc(v) + '</span>';
     return esc(v);
   }
@@ -1037,10 +1292,16 @@
   });
 
   function onKey(e) {
-    if (e.key !== 'Escape' || host.style.display === 'none') return;
-    if (state.drawer) { state.drawer = null; render(); } else teardown();
+    if (e.key !== 'Escape' || !host.isConnected || host.style.display === 'none') return;
+    const from = e.composedPath()[0];
+    if (from && /^(INPUT|TEXTAREA|SELECT)$/.test(from.tagName) && from.value) return; // clear the field first
+    const panel = root.querySelector('.report');
+    if (panel) panel.remove();
+    else if (state.drawer) { state.drawer = null; render(); }
+    else teardown();
   }
   document.addEventListener('keydown', onKey);
+  window.__skywardGlowTeardown = teardown;
 
   // Hide the app and use the real Skyward link, with a pill to come back.
   function openInSkyward(el) {
@@ -1080,6 +1341,7 @@
     removeBackPill();
     document.documentElement.style.overflow = '';
     if (typeof onKey === 'function') document.removeEventListener('keydown', onKey);
+    if (window.__skywardGlowTeardown === teardown) delete window.__skywardGlowTeardown;
   }
 
   // Copies what the app read plus the relevant Skyward HTML (styles and
@@ -1090,13 +1352,25 @@
     if (state.view.startsWith('page:') || state.view === 'attendance') {
       const label = state.view === 'attendance' ? attendanceNav && attendanceNav.label : state.view.slice(5);
       html = (state.pages[label] && state.pages[label].html) || '';
-    } else if (first) {
+    } else if (first && first.closest('tr')) {
       const grid = gridFor(first.closest('tr')).cloneNode(true);
       $$(grid, 'script, style').forEach((n) => n.remove());
       $$(grid, '[style]').forEach((n) => n.removeAttribute('style'));
       html = grid.outerHTML;
     }
-    const text = 'Skyward Glow report\nView: ' + state.view + '\nTerms: ' + data.terms.join(', ') + '\nPicked: ' + state.term +
+    const diag = [
+      'Version: ' + VERSION + ' · ' + navigator.userAgent.replace(/^.*?(Chrome|Firefox|Safari|Edg)\/([\d]+).*$/, '$1 $2') +
+        ' · navigation API: ' + ('navigation' in window ? 'yes' : 'no'),
+      'Page: ' + location.pathname.split('/').pop(),
+      'Page loads: ' + (loaderLog.join(' | ') || 'none yet'),
+      'Menu links: ' + nav.map((n) => n.label + ' [' + n.el.tagName.toLowerCase() + (navTarget(n.el) ? ' → ' + navTarget(n.el) : '') +
+        (isVisible(n.el) ? '' : ', hidden') + ']').join(', '),
+      'Hidden field names: ' + sessionFields().map((f) => f[0]).join(', '),
+      'Forms: ' + $$(document, 'form').map((f) => (f.id || f.name || 'form') + ' ' + (f.getAttribute('method') || 'get') + ' ' +
+        (f.getAttribute('action') || '').split('?')[0] + ' (' + f.elements.length + ' fields)').join(', '),
+      'First menu link: ' + (nav[0] ? nav[0].el.outerHTML.replace(/\s+/g, ' ').slice(0, 400) : '-')
+    ].join('\n');
+    const text = 'Skyward Glow report\n' + diag + '\nView: ' + state.view + '\nTerms: ' + data.terms.join(', ') + '\nPicked: ' + state.term +
       '\nMenu: ' + nav.map((n) => n.label).join(', ') + '\n' +
       data.courses.map((c) => c.name + ' | period ' + c.period + ' | ' + c.teacher + ' | ' +
         data.terms.map((t) => t + '=' + (c.grades[t] ? c.grades[t].raw : '-')).join(' ')).join('\n') +
@@ -1125,6 +1399,7 @@
   }
 
   render();
+  checkForUpdate();
 
   // =============================================================== icons
 
@@ -1187,6 +1462,14 @@ button{font:inherit;color:inherit}
 .flame{display:grid;place-items:center}
 .flame.big svg{width:56px;height:56px;animation:flicker 1.4s ease-in-out infinite}
 @keyframes flicker{50%{transform:scale(1.08) rotate(-3deg);opacity:.8}}
+
+/* version + update */
+.ver{font:600 10px Inter,system-ui,sans-serif;color:var(--muted);border:1px solid var(--line);border-radius:99px;padding:2px 7px;margin-left:2px;letter-spacing:.02em}
+.update{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:16px clamp(16px,4vw,48px) 0;padding:12px 16px;border-radius:14px;
+  background:color-mix(in srgb,var(--accent) 12%,var(--surface));border:1px solid color-mix(in srgb,var(--accent) 40%,var(--line));font-size:14px}
+.update span{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.update .btn{text-decoration:none;flex:none}
+.version-note{color:var(--muted);font-size:12px;margin-top:24px;text-align:center}
 
 /* sidebar */
 .side{position:relative;z-index:2;display:flex;flex-direction:column;gap:22px;padding:22px 16px;border-right:1px solid var(--line);
