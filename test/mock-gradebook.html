@@ -73,6 +73,12 @@ var STRICT = /strict=1/.test(location.search);
 document.querySelectorAll('#sf_navMenu a[data-nav]').forEach(function(a){
   a.addEventListener('click',function(e){
     if (STRICT && !e.isTrusted) return;
+    // Like Skyward: show a busy screen and cursor while the next page loads.
+    document.body.insertAdjacentHTML('beforeend',
+      '<div class="blockUI blockOverlay" style="position:fixed;inset:0;background:rgba(0,0,0,.3);cursor:wait;z-index:5"></div>' +
+      '<div style="position:fixed;top:40%;left:40%;z-index:6"><div style="background:#fff;padding:20px;border:1px solid #333">Please wait...</div></div>');
+    document.body.classList.add('sf_busy');
+    document.body.style.cursor = 'wait';
     var page='pages/'+a.dataset.nav.replace('.w','.html');
     if (a.dataset.nav==='sfschedule001.w') { location.href=page+'?encses=mock123'; return; }
     // Like some Skyward links: the session rides in the address itself.

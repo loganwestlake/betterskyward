@@ -21,8 +21,9 @@ function check(name, ok, detail) {
   if (!ok) failures++;
 }
 
-async function openApp(browser, url, viewport = { width: 1360, height: 900 }) {
+async function openApp(browser, url, viewport = { width: 1360, height: 900 }, time) {
   const page = await browser.newPage({ viewport });
+  if (time) await page.clock.install({ time });
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
   // Pretend a newer version is published so the update banner shows.
@@ -60,8 +61,16 @@ async function waitFor(fn, ms = 15000) {
     check('update banner for newer version', (await q('.update'))[0]?.includes('99.0.0'), await q('.update'));
     check('opens on Q2, not FIN', (await q('.hero .sub'))[0]?.includes('Q2'), await q('.hero .sub'));
     check('four stat tiles', (await q('.stat')).length === 4);
+    const segs = await q('.glance .seg-btn');
+    check('at-a-glance has Quarter 1-4', JSON.stringify(segs) === JSON.stringify(['Quarter 1', 'Quarter 2', 'Quarter 3', 'Quarter 4']), segs);
+    await click('.glance .seg-btn[data-term="Q3"]');
+    check('switching to Q3 updates the panel', (await q('.glance h3'))[0] === 'Q3 at a glance' && (await q('.glance .empty')).length === 1, await q('.glance'));
+    check('switching also updates the stats', (await q('.hero .sub'))[0]?.includes('Q3'));
+    await click('.glance .seg-btn[data-term="Q2"]');
 
     await click('.side [data-view=grades]');
+    const tabs = await q('.tab');
+    check('grades tabs in Skyward order with Q3 and Q4', JSON.stringify(tabs) === JSON.stringify(['Q1', 'Q2', 'SM1', 'Q3', 'Q4', 'FIN']), tabs);
     const cards = await q('.card h2');
     check('7 class cards', cards.length === 7, cards);
     check('teachers read', (await q('.card .teacher')).length === 7);
@@ -85,6 +94,16 @@ async function waitFor(fn, ms = 15000) {
     check('attendance loaded with script-drawn grid', await waitFor(async () => (await q('.stat')).some((s) => s.startsWith('Tardy2'))), await q('.view'));
     check('period numbers not colored as grades', (await page.evaluate(() =>
       document.getElementById('skyward-glow-host').shadowRoot.querySelectorAll('td .num-cell').length)) === 0);
+
+    const busy = () => page.evaluate(() => ({
+      overlay: [...document.querySelectorAll('.blockOverlay')].some((e) => e.getClientRects().length),
+      message: [...document.querySelectorAll('body *')].some((e) => e.children.length === 0 && /please wait/i.test(e.textContent) && e.getClientRects().length),
+      cursor: document.body.style.cursor,
+      busyClass: document.body.classList.contains('sf_busy')
+    }));
+    const b = await busy();
+    check('Skyward "Please wait" cleared after background loads', !b.overlay && !b.message && b.cursor !== 'wait' && !b.busyClass, b);
+    check('Skyward page itself still visible', await page.evaluate(() => document.getElementById('sf_navMenu').getClientRects().length > 0));
 
     await click('.side [data-view=more]');
     check('More lists menu pages', (await q('.tile')).length >= 4, await q('.tile'));
@@ -133,6 +152,31 @@ async function waitFor(fn, ms = 15000) {
     check('report has field names but no session values', report.includes('encses') && !report.includes('mock123'));
     check('report leaves out grid state fields', !report.includes('gridSortState'));
     check('still on the gradebook', page.url() === BASE + '?strict=1', page.url());
+    check('no script errors', errors.length === 0, errors);
+    await page.close();
+
+    console.log('Countdowns (Mon Oct 19, 2026, 10:00 AM)');
+    ({ page, errors, q, click } = await openApp(browser, BASE, undefined, new Date(2026, 9, 19, 10, 0, 0)));
+    check('Q2 picked from the calendar', (await q('.hero .sub'))[0]?.includes('Q2'));
+    // Seconds left on the quarter countdown, read back from the screen.
+    const left = async () => {
+      const [d, h, m, sec] = (await q('.qclock.current .cd')).map((t) => parseInt(t, 10));
+      return ((d * 24 + h) * 60 + m) * 60 + sec;
+    };
+    const expected = (new Date(2026, 11, 18, 14, 10) - new Date(2026, 9, 19, 10, 0)) / 1000; // last bell is 2:10 PM
+    const before = await left();
+    check('Q2 counts down to Dec 18 after the last bell', Math.abs(before - expected) <= 5, { before, expected });
+    check('Q2 progress shown', (await q('.qclock-sub'))[0]?.includes('% done'));
+    await page.clock.runFor(3000);
+    const after = await left();
+    check('countdown ticks every second', before - after >= 2 && before - after <= 4, { before, after });
+    check('current class shows time left', /^3:5\d left$/.test((await q('.now-live'))[0] || ''), await q('.now-live'));
+    await click('.glance .seg-btn[data-term="Q1"]');
+    check('Q1 shows as over', (await q('.qclock.past .qclock-sub'))[0]?.startsWith('Ended'), await q('.glance'));
+    await click('.glance .seg-btn[data-term="Q3"]');
+    check('Q3 shows when it starts', (await q('.qclock.future .qclock-label'))[0] === 'Q3 starts in', await q('.glance'));
+    await page.clock.runFor(4 * 60 * 1000);
+    check('class change re-renders the card', (await q('.now h3'))[0] === 'Today' && (await q('.now-big'))[0] === 'Biology 1', await q('.now'));
     check('no script errors', errors.length === 0, errors);
     await page.close();
 

@@ -14,7 +14,7 @@
 
   // Bump on every change. The install page and the app both show it, and
   // the app compares it with the published copy to offer updates.
-  const VERSION = '2.0.0';
+  const VERSION = '2.1.0';
   const UPDATE_URL = 'https://loganwestlake.github.io/betterskyward/glow.js';
   const INSTALL_URL = 'https://loganwestlake.github.io/betterskyward/';
 
@@ -196,7 +196,31 @@
       return pa - pb || a.period.localeCompare(b.period);
     });
 
-    return { courses, terms, student: studentName(doc), live: doc === document };
+    return { courses, terms: orderTerms(doc, terms), student: studentName(doc), live: doc === document };
+  }
+
+  // Term columns in Skyward's own order, including quarters with no grades
+  // yet, so Q3 and Q4 can be picked before they start.
+  function orderTerms(doc, graded) {
+    const isQuarter = (t) => /^Q\d$/i.test(t);
+    const first = gradeLinks(doc)[0];
+    const tr = first && first.closest('tr');
+    let order = [];
+    if (tr) {
+      for (const th of $$(gridFor(tr), 'th')) {
+        const t = clean(th.textContent);
+        if ((graded.includes(t) || isQuarter(t)) && !order.includes(t)) order.push(t);
+      }
+    }
+    if (!graded.every((t) => order.includes(t))) order = graded.slice();
+    if (order.some(isQuarter)) {
+      for (const q of ['Q1', 'Q2', 'Q3', 'Q4']) {
+        if (order.includes(q)) continue;
+        const fin = order.findIndex((t) => /^(FIN|FINAL|YR)/i.test(t));
+        order.splice(fin === -1 ? order.length : fin, 0, q);
+      }
+    }
+    return order;
   }
 
   // ======================================================= generic tables
@@ -382,15 +406,18 @@
       const navApi = window.navigation;
       let done = false;
 
+      const snap = busySnapshot();
       function finish(err, req) {
         if (done) return;
         done = true;
+        clearBusy(snap);
+        setTimeout(() => clearBusy(snap), 600); // some busy screens appear after a short delay
         proto.submit = NATIVE.submit;
         if (NATIVE.requestSubmit) proto.requestSubmit = NATIVE.requestSubmit;
         window.open = NATIVE.open;
         document.removeEventListener('submit', onSubmit, true);
         if (navApi) navApi.removeEventListener('navigate', onNavigate);
-        if (err) { catchLateNavigation(); reject(err); } else resolve(req);
+        if (err) { catchLateNavigation(snap); reject(err); } else resolve(req);
       }
       function fromForm(form) {
         const method = (form.getAttribute('method') || 'get').toUpperCase();
@@ -422,14 +449,68 @@
     });
   }
 
+  // When Skyward starts changing pages it shows "Please wait" and a busy
+  // cursor. We cancel that page change, so Skyward never clears them.
+  // Note what was showing before our click and undo anything new after.
+  const BUSY_SEL = '.blockUI, .blockOverlay, .blockMsg, .ui-widget-overlay, [class*="busy" i], [id*="busy" i], ' +
+    '[class*="wait" i], [id*="wait" i], [class*="loading" i], [id*="loading" i], [class*="spinner" i]';
+
+  function waitMessages() {
+    return $$(document.body, '*').filter((el) => el.id !== HOST_ID && el.children.length <= 3 &&
+      /^\s*(please wait|loading|processing)/i.test(el.textContent) && el.textContent.length < 80 && isVisible(el));
+  }
+
+  function busySnapshot() {
+    return {
+      els: new Set($$(document, BUSY_SEL).filter(isVisible)),
+      msgs: new Set(waitMessages()),
+      htmlCls: Array.from(document.documentElement.classList),
+      bodyCls: Array.from(document.body.classList),
+      htmlCursor: document.documentElement.style.cursor,
+      bodyCursor: document.body.style.cursor
+    };
+  }
+
+  function clearBusy(snap) {
+    // Only ever hide small floating boxes: never the page itself, anything
+    // holding the app, or anything with more than a short message in it.
+    const hide = (el) => {
+      if (el === document.body || el === document.documentElement || el.contains(host)) return;
+      if (clean(el.textContent).length > 120) return;
+      el.style.setProperty('display', 'none', 'important');
+    };
+    try {
+      if (window.jQuery && window.jQuery.unblockUI && ![...snap.els].some((e) => e.matches('.blockUI'))) window.jQuery.unblockUI({ fadeOut: 0 });
+    } catch (e) { /* not jQuery BlockUI */ }
+    for (const el of $$(document, BUSY_SEL)) if (!snap.els.has(el) && isVisible(el)) hide(el);
+    for (const el of waitMessages()) if (!snap.msgs.has(el)) hide(overlayRoot(el));
+    for (const [node, before] of [[document.documentElement, snap.htmlCls], [document.body, snap.bodyCls]]) {
+      for (const cls of Array.from(node.classList)) if (!before.includes(cls) && /busy|wait|load|block/i.test(cls)) node.classList.remove(cls);
+    }
+    document.documentElement.style.cursor = snap.htmlCursor;
+    document.body.style.cursor = snap.bodyCursor;
+  }
+
+  // The floating box around a message, so the whole overlay goes. Stops at
+  // anything holding more than a short message, so page layout containers
+  // are never hidden.
+  function overlayRoot(el) {
+    let top = el;
+    for (let n = el.parentElement; n && n !== document.body && clean(n.textContent).length <= 120; n = n.parentElement) {
+      if (/fixed|absolute/.test(getComputedStyle(n).position)) top = n;
+    }
+    return top;
+  }
+
   // If Skyward reacts to the click only after we gave up (slow network),
   // its page change would replace the app. Keep cancelling page changes
   // for a few more seconds while the app is on screen.
-  function catchLateNavigation() {
+  function catchLateNavigation(snap) {
     const until = Date.now() + 10000;
     const appShowing = () => Date.now() < until && host.isConnected && host.style.display !== 'none';
-    const onNavigate = (e) => { if (appShowing() && e.cancelable && !e.hashChange) e.preventDefault(); };
-    const onSubmit = (e) => { if (appShowing()) e.preventDefault(); };
+    const cancel = (e) => { e.preventDefault(); setTimeout(() => clearBusy(snap), 0); };
+    const onNavigate = (e) => { if (appShowing() && e.cancelable && !e.hashChange) cancel(e); };
+    const onSubmit = (e) => { if (appShowing()) cancel(e); };
     if (window.navigation) window.navigation.addEventListener('navigate', onNavigate);
     document.addEventListener('submit', onSubmit, true);
     setTimeout(() => {
@@ -522,6 +603,7 @@
   async function fetchAssignments(link) {
     const sel = '.ui-dialog, [role="dialog"], .sf_DialogWrap, [id*="gradeInfo" i], [id*="dialog" i]';
     const before = new Set($$(document, sel).filter(isVisible));
+    const snap = busySnapshot();
     link.click();
     for (let i = 0; i < 40; i++) {
       await wait(150);
@@ -535,8 +617,10 @@
       const close = dlg.querySelector('.ui-dialog-titlebar-close, .sf_DialogClose, [title="Close" i], [aria-label="Close" i], button.close, a.close');
       if (close) close.click(); else dlg.style.display = 'none';
       $$(document, '.ui-widget-overlay').forEach((o) => { o.style.display = 'none'; });
+      clearBusy(snap);
       return result;
     }
+    clearBusy(snap);
     return null;
   }
 
@@ -561,6 +645,8 @@
   // the latest quarter-style term (Q2, PR3, T1...) most classes have, and
   // only then a semester or final column.
   function pickCurrentTerm(data) {
+    const dated = datedQuarter();
+    if (dated && data.terms.includes(dated)) return dated;
     const lit = highlightedTerm(data);
     if (lit) return lit;
     const count = (t) => data.courses.filter((c) => c.grades[t]).length;
@@ -633,6 +719,66 @@
     return ((h + 11) % 12 + 1) + ':' + String(m).padStart(2, '0') + (h < 12 ? ' AM' : ' PM');
   };
 
+  // ======================================================== quarter dates
+
+  // Hernando County Schools 2026-27 grading periods. End dates are from the
+  // district calendar; start dates are the first school day after the
+  // previous quarter or break and only drive the progress bar. Other years
+  // or districts fall outside these dates and simply get no countdown.
+  const QUARTERS = {
+    Q1: ['2026-08-11', '2026-10-09'],
+    Q2: ['2026-10-12', '2026-12-18'],
+    Q3: ['2027-01-05', '2027-03-12'],
+    Q4: ['2027-03-22', '2027-05-28']
+  };
+
+  function quarterDates(term) {
+    const q = QUARTERS[String(term).toUpperCase()];
+    if (!q) return null;
+    const [sy, sm, sd] = q[0].split('-').map(Number);
+    const [ey, em, ed] = q[1].split('-').map(Number);
+    const lastBell = bells.length ? bells[bells.length - 1].end : 16 * 60;
+    return {
+      start: new Date(sy, sm - 1, sd, 0, 0),
+      end: new Date(ey, em - 1, ed, Math.floor(lastBell / 60), lastBell % 60)
+    };
+  }
+
+  // The quarter today falls in, if the dates above cover today.
+  function datedQuarter() {
+    const now = Date.now();
+    return Object.keys(QUARTERS).find((q) => {
+      const d = quarterDates(q);
+      return now >= d.start.getTime() && now <= d.end.getTime();
+    }) || null;
+  }
+
+  const shortDate = (d) => d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+
+  // Live countdowns: any element with data-until gets refreshed every second.
+  function countdown(until, style) {
+    return '<span class="tick ' + style + '" data-until="' + until + '">' + countdownText(until - Date.now(), style) + '</span>';
+  }
+
+  function countdownText(ms, style) {
+    const t = Math.max(0, Math.floor(ms / 1000));
+    const d = Math.floor(t / 86400), h = Math.floor(t / 3600) % 24, m = Math.floor(t / 60) % 60, sec = t % 60;
+    const two = (n) => String(n).padStart(2, '0');
+    if (style === 'short') return (h ? h + ':' + two(m) : m) + ':' + two(sec);
+    return [[d, 'days'], [two(h), 'hrs'], [two(m), 'min'], [two(sec), 'sec']]
+      .map(([n, unit]) => '<span class="cd"><b>' + n + '</b><small>' + unit + '</small></span>').join('');
+  }
+
+  function tick() {
+    let ended = false;
+    for (const el of root.querySelectorAll('.tick')) {
+      const left = Number(el.dataset.until) - Date.now();
+      if (left <= 0) ended = true;
+      el.innerHTML = countdownText(left, el.classList.contains('short') ? 'short' : 'long');
+    }
+    if (ended && (state.view === 'home' || state.view === 'schedule')) renderViewOnly();
+  }
+
   // ============================================================ snapshot
 
   function saveSnapshot(data) {
@@ -699,8 +845,8 @@
   }
   const previous = store(SNAP_KEY);
   if (data.courses.length) saveSnapshot(data);
-  state.term = data.terms.length ? pickCurrentTerm(data) : null;
   const bells = bellSchedule(data.courses);
+  state.term = data.terms.length ? pickCurrentTerm(data) : null;
 
   const VIEWS = [
     { id: 'home', label: 'Home', icon: 'home' },
@@ -824,7 +970,7 @@
           (changes.length ? '<ul class="rows">' + changes.map(changeRow).join('') + '</ul>'
             : '<p class="empty">' + (previous ? 'No grade changes since your last visit.' : 'Changes will show up here next time you open Glow.') + '</p>') +
         '</div>' +
-        (data.courses.length ? overviewChart(graded) : '') +
+        (data.courses.length ? glancePanel(graded) : '') +
       '</section>';
   }
 
@@ -846,14 +992,19 @@
   function nowCard(status) {
     if (!status) return '';
     let big = '', small = '', course = null;
-    if (status.kind === 'now') { course = status.bell.course; big = course.name; small = 'Happening now · ' + status.left + ' min left, ends ' + clock(status.bell.end); }
+    let live = '';
+    if (status.kind === 'now') {
+      course = status.bell.course; big = course.name; small = 'Happening now · ends ' + clock(status.bell.end);
+      const end = new Date(); end.setHours(Math.floor(status.bell.end / 60), status.bell.end % 60, 0, 0);
+      live = '<p class="now-live">' + countdown(end.getTime(), 'short') + ' <small>left</small></p>';
+    }
     if (status.kind === 'next') { course = status.bell.course; big = course.name; small = 'Up next · starts ' + clock(status.bell.start) + ' (in ' + status.in + ' min)'; }
     if (status.kind === 'done') { big = 'School\'s out'; small = 'Your last class ended at ' + clock(bells[bells.length - 1].end) + '.'; }
     if (status.kind === 'weekend') { big = 'It\'s the weekend'; small = 'First bell Monday at ' + clock(bells[0].start) + '.'; }
     const g = course && course.grades[state.term];
     return '<div class="panel now tone-' + tone(g) + '">' +
       '<div class="panel-head"><h3>' + (status.kind === 'now' ? '<span class="pulse"></span>Right now' : 'Today') + '</h3><button class="link" data-view="schedule">Schedule →</button></div>' +
-      '<p class="now-big">' + esc(big) + '</p><p class="now-small">' + esc(small) + '</p>' +
+      '<p class="now-big">' + esc(big) + '</p>' + live + '<p class="now-small">' + esc(small) + '</p>' +
       (course ? '<p class="now-meta">' + esc([course.period && 'Period ' + course.period, course.teacher].filter(Boolean).join(' · ')) +
         (g ? ' · <b>' + esc(g.raw) + '</b>' : '') + '</p>' : '') +
       '</div>';
@@ -887,15 +1038,45 @@
       '<span class="delta ' + (up ? 'up' : 'down') + '">' + (up ? '▲ +' : '▼ ') + Math.abs(ch.to - ch.from).toFixed(1) + '</span></button></li>';
   }
 
-  function overviewChart(graded) {
-    if (!graded.length) return '';
-    return '<div class="panel span2"><div class="panel-head"><h3>' + esc(state.term) + ' at a glance</h3><small>out of 100</small></div>' +
-      '<div class="bars">' + graded.map((c) => {
+  function glancePanel(graded) {
+    const quarters = data.terms.filter((t) => /^Q\d$/i.test(t));
+    const picker = quarters.length
+      ? '<div class="seg" role="tablist">' + quarters.map((q) =>
+          '<button role="tab" class="seg-btn' + (q === state.term ? ' on' : '') + '" data-term="' + esc(q) + '">' + esc(q.replace(/^Q/i, 'Quarter ')) + '</button>').join('') + '</div>'
+      : '';
+    return '<div class="panel span2 glance"><div class="panel-head"><h3>' + esc(state.term) + ' at a glance</h3>' + picker + '</div>' +
+      quarterClock(state.term) +
+      (graded.length ? overviewBars(graded) : '<p class="empty">No grades in ' + esc(state.term) + ' yet.</p>') + '</div>';
+  }
+
+  function quarterClock(term) {
+    const q = quarterDates(term);
+    if (!q || datedQuarter() === null && Date.now() > quarterDates('Q4').end.getTime() + 60 * 86400000) return '';
+    const now = Date.now();
+    const days = (ms) => Math.round(ms / 86400000);
+    if (now < q.start.getTime()) {
+      return '<div class="qclock future"><p class="qclock-label">' + esc(term) + ' starts in</p>' + countdown(q.start.getTime(), 'long') +
+        '<p class="qclock-sub">Starts around ' + esc(shortDate(q.start)) + ' · ends ' + esc(shortDate(q.end)) + '</p></div>';
+    }
+    if (now > q.end.getTime()) {
+      const ago = days(now - q.end.getTime());
+      return '<div class="qclock past"><p class="qclock-label">' + esc(term) + ' is over</p>' +
+        '<p class="qclock-sub">Ended ' + esc(shortDate(q.end)) + (ago ? ' · ' + ago + (ago === 1 ? ' day' : ' days') + ' ago' : ' · today') + '</p></div>';
+    }
+    const total = q.end - q.start, done = now - q.start;
+    const pct = Math.min(100, Math.max(0, (done / total) * 100));
+    return '<div class="qclock current"><p class="qclock-label">Time left in ' + esc(term) + '</p>' + countdown(q.end.getTime(), 'long') +
+      '<div class="qbar"><span style="width:' + pct.toFixed(1) + '%"></span></div>' +
+      '<p class="qclock-sub">' + Math.round(pct) + '% done · ends ' + esc(shortDate(q.end)) + ' after the last bell</p></div>';
+  }
+
+  function overviewBars(graded) {
+    return '<div class="bars">' + graded.map((c) => {
         const v = Math.max(0, Math.min(100, c.grades[state.term].score));
         return '<button class="bar tone-' + tone(c.grades[state.term]) + '" data-course="' + esc(c.key) + '" title="' + esc(c.name + ': ' + c.grades[state.term].raw) + '">' +
           '<span class="bar-label">' + esc(c.name) + '</span><span class="bar-track"><span class="bar-fill" style="width:' + v + '%"></span></span>' +
           '<span class="bar-val">' + Math.round(c.grades[state.term].score) + '</span></button>';
-      }).join('') + '</div></div>';
+      }).join('') + '</div>';
   }
 
   // -------------------------------------------------------------- grades
@@ -1335,7 +1516,11 @@
 
   function teardown() {
     const h = document.getElementById(HOST_ID);
-    if (h) h.remove();
+    if (h) {
+      clearInterval(h.__ticker);
+      if (h.__clearBusy) h.__clearBusy();
+      h.remove();
+    }
     const ps = document.getElementById(HOST_ID + '-print');
     if (ps) ps.remove();
     removeBackPill();
@@ -1400,6 +1585,9 @@
 
   render();
   checkForUpdate();
+  host.__ticker = setInterval(tick, 1000);
+  const bootSnap = busySnapshot();
+  host.__clearBusy = () => clearBusy(bootSnap);
 
   // =============================================================== icons
 
@@ -1448,7 +1636,7 @@ button{font:inherit;color:inherit}
   --accent:#F59E0B;--accent2:#EA580C;--glow:rgba(245,158,11,.14);
   --a:#34D399;--b:#60A5FA;--c:#FBBF24;--d:#FB923C;--f:#F87171;--none:#52525B;
   --shadow:0 1px 0 rgba(255,255,255,.04) inset,0 10px 30px -12px rgba(0,0,0,.6);
-  position:absolute;inset:0;display:grid;grid-template-columns:260px 1fr;background:var(--bg);color:var(--text);
+  position:absolute;inset:0;display:grid;grid-template-columns:260px 1fr;background:var(--bg);color:var(--text);cursor:default;
   font:15px/1.5 Inter,system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased;overflow:hidden}
 .app[data-theme="light"]{
   --bg:#FAF8F5;--surface:#FFFFFF;--surface2:#F3EFE9;--line:#E8E2D9;--text:#1C1917;--muted:#6F6861;--glow:rgba(245,158,11,.18);
@@ -1552,6 +1740,27 @@ h1{font-family:"Playfair Display",Georgia,serif;font-weight:600;font-size:clamp(
 .bar-fill{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,color-mix(in srgb,var(--tone) 55%,transparent),var(--tone));animation:grow .9s cubic-bezier(.2,.8,.2,1) both}
 @keyframes grow{from{width:0}}
 .bar-val{font-weight:800;text-align:right;color:var(--tone);font-variant-numeric:tabular-nums}
+
+/* quarter countdown */
+.glance .panel-head{flex-wrap:wrap}
+.seg{display:flex;gap:3px;padding:3px;background:var(--surface2);border:1px solid var(--line);border-radius:12px;overflow-x:auto;max-width:100%}
+.seg-btn{font:600 12px Inter,system-ui,sans-serif;padding:6px 12px;border:0;border-radius:9px;background:none;color:var(--muted);cursor:pointer;white-space:nowrap}
+.seg-btn:hover{color:var(--text)}
+.seg-btn.on{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#0A0A0A}
+.qclock{margin:4px 0 22px;padding:18px 20px;border-radius:16px;border:1px solid var(--line);
+  background:radial-gradient(500px 140px at 0 0,color-mix(in srgb,var(--accent) 12%,transparent),transparent),var(--surface2)}
+.qclock-label{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--accent);margin-bottom:8px}
+.qclock-sub{color:var(--muted);font-size:13px;margin-top:10px}
+.qclock.past .qclock-label{color:var(--muted)}
+.tick.long{display:flex;gap:10px;flex-wrap:wrap}
+.cd{display:flex;flex-direction:column;align-items:center;min-width:72px;padding:10px 12px;border-radius:14px;background:var(--surface);border:1px solid var(--line)}
+.cd b{font-size:34px;font-weight:800;letter-spacing:-.03em;line-height:1.05;font-variant-numeric:tabular-nums}
+.cd small{color:var(--muted);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em}
+.cd:first-child b{background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;background-clip:text;color:transparent}
+.qbar{height:8px;border-radius:99px;background:var(--surface);margin-top:14px;overflow:hidden}
+.qbar span{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--accent),var(--accent2))}
+.now-live{font-size:30px;font-weight:800;letter-spacing:-.03em;margin-top:8px;font-variant-numeric:tabular-nums;color:var(--tone)}
+.now-live small{font-size:13px;font-weight:600;color:var(--muted);letter-spacing:0}
 
 /* grades */
 .toolbar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}
@@ -1682,6 +1891,8 @@ tr.group td{font-weight:700;color:var(--accent);background:color-mix(in srgb,var
   .home-grid{grid-template-columns:1fr}
   .span2{grid-column:auto}
   .bar{grid-template-columns:minmax(0,120px) 1fr 34px}
+  .cd{min-width:0;flex:1;padding:8px 6px}.cd b{font-size:24px}
+  .seg{width:100%}.seg-btn{flex:1;padding:7px 2px;font-size:11.5px}
   .filters{min-width:100%}.search{max-width:none}
   .grid{grid-template-columns:1fr}
   .slot{grid-template-columns:64px 1fr;gap:10px}
