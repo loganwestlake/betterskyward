@@ -14,7 +14,7 @@
 
   // Bump on every change. The install page and the app both show it, and
   // the app compares it with the published copy to offer updates.
-  const VERSION = '2.1.0';
+  const VERSION = '2.1.1';
   const UPDATE_URL = 'https://loganwestlake.github.io/betterskyward/glow.js';
   const INSTALL_URL = 'https://loganwestlake.github.io/betterskyward/';
 
@@ -485,7 +485,7 @@
     for (const el of $$(document, BUSY_SEL)) if (!snap.els.has(el) && isVisible(el)) hide(el);
     for (const el of waitMessages()) if (!snap.msgs.has(el)) hide(overlayRoot(el));
     for (const [node, before] of [[document.documentElement, snap.htmlCls], [document.body, snap.bodyCls]]) {
-      for (const cls of Array.from(node.classList)) if (!before.includes(cls) && /busy|wait|load|block/i.test(cls)) node.classList.remove(cls);
+      for (const cls of Array.from(node.classList)) if (!before.includes(cls) && /busy|wait|blockui/i.test(cls)) node.classList.remove(cls);
     }
     document.documentElement.style.cursor = snap.htmlCursor;
     document.body.style.cursor = snap.bodyCursor;
@@ -640,15 +640,17 @@
     return { avg: avg(scores), gpa: avg(points), count: scores.length || points.length };
   }
 
-  // Skyward highlights the current grading period, so look for the one
+  // Skyward's own highlight comes first since it's right for any district;
+  // the Hernando calendar is next. Skyward highlights the current grading
+  // period, so look for the one
   // column whose cells are styled differently from the rest. Otherwise use
   // the latest quarter-style term (Q2, PR3, T1...) most classes have, and
   // only then a semester or final column.
   function pickCurrentTerm(data) {
-    const dated = datedQuarter();
-    if (dated && data.terms.includes(dated)) return dated;
     const lit = highlightedTerm(data);
     if (lit) return lit;
+    const dated = datedQuarter();
+    if (dated && data.terms.includes(dated)) return dated;
     const count = (t) => data.courses.filter((c) => c.grades[t]).length;
     const quarters = data.terms.filter((t) => /^(Q|T|PR|P|MP)\s*\d/i.test(t));
     for (let i = quarters.length - 1; i >= 0; i--) {
@@ -757,12 +759,24 @@
 
   // Live countdowns: any element with data-until gets refreshed every second.
   function countdown(until, style) {
-    return '<span class="tick ' + style + '" data-until="' + until + '">' + countdownText(until - Date.now(), style) + '</span>';
+    return '<span class="tick ' + style + '" data-until="' + until + '">' + countdownText(until, style) + '</span>';
   }
 
-  function countdownText(ms, style) {
-    const t = Math.max(0, Math.floor(ms / 1000));
-    const d = Math.floor(t / 86400), h = Math.floor(t / 3600) % 24, m = Math.floor(t / 60) % 60, sec = t % 60;
+  // Counts calendar days and wall-clock time separately, so a daylight
+  // saving change in between doesn't shift the hours.
+  function countdownParts(until) {
+    const now = new Date(), end = new Date(until);
+    if (end <= now) return [0, 0, 0, 0];
+    let days = Math.round((Date.UTC(end.getFullYear(), end.getMonth(), end.getDate()) -
+      Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())) / 86400000);
+    let secs = (end.getHours() * 3600 + end.getMinutes() * 60 + end.getSeconds()) -
+      (now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds());
+    if (secs < 0) { days -= 1; secs += 86400; }
+    return [days, Math.floor(secs / 3600), Math.floor(secs / 60) % 60, secs % 60];
+  }
+
+  function countdownText(until, style) {
+    const [d, h, m, sec] = countdownParts(until);
     const two = (n) => String(n).padStart(2, '0');
     if (style === 'short') return (h ? h + ':' + two(m) : m) + ':' + two(sec);
     return [[d, 'days'], [two(h), 'hrs'], [two(m), 'min'], [two(sec), 'sec']]
@@ -770,11 +784,12 @@
   }
 
   function tick() {
+    if (!host.isConnected) return clearInterval(host.__ticker);
     let ended = false;
     for (const el of root.querySelectorAll('.tick')) {
-      const left = Number(el.dataset.until) - Date.now();
-      if (left <= 0) ended = true;
-      el.innerHTML = countdownText(left, el.classList.contains('short') ? 'short' : 'long');
+      const until = Number(el.dataset.until);
+      if (until <= Date.now()) ended = true;
+      el.innerHTML = countdownText(until, el.classList.contains('short') ? 'short' : 'long');
     }
     if (ended && (state.view === 'home' || state.view === 'schedule')) renderViewOnly();
   }
@@ -843,6 +858,8 @@
       } catch (e) { /* stays empty; Grades shows how to fix it */ }
     }
   }
+  // Running the bookmark again while that loaded turns the app off.
+  if (!host.isConnected) return;
   const previous = store(SNAP_KEY);
   if (data.courses.length) saveSnapshot(data);
   const bells = bellSchedule(data.courses);
@@ -998,7 +1015,11 @@
       const end = new Date(); end.setHours(Math.floor(status.bell.end / 60), status.bell.end % 60, 0, 0);
       live = '<p class="now-live">' + countdown(end.getTime(), 'short') + ' <small>left</small></p>';
     }
-    if (status.kind === 'next') { course = status.bell.course; big = course.name; small = 'Up next · starts ' + clock(status.bell.start) + ' (in ' + status.in + ' min)'; }
+    if (status.kind === 'next') {
+      course = status.bell.course; big = course.name; small = 'Up next · starts ' + clock(status.bell.start);
+      const start = new Date(); start.setHours(Math.floor(status.bell.start / 60), status.bell.start % 60, 0, 0);
+      live = '<p class="now-live next"><small>starts in</small> ' + countdown(start.getTime(), 'short') + '</p>';
+    }
     if (status.kind === 'done') { big = 'School\'s out'; small = 'Your last class ended at ' + clock(bells[bells.length - 1].end) + '.'; }
     if (status.kind === 'weekend') { big = 'It\'s the weekend'; small = 'First bell Monday at ' + clock(bells[0].start) + '.'; }
     const g = course && course.grades[state.term];
@@ -1518,7 +1539,6 @@
     const h = document.getElementById(HOST_ID);
     if (h) {
       clearInterval(h.__ticker);
-      if (h.__clearBusy) h.__clearBusy();
       h.remove();
     }
     const ps = document.getElementById(HOST_ID + '-print');
@@ -1586,8 +1606,6 @@
   render();
   checkForUpdate();
   host.__ticker = setInterval(tick, 1000);
-  const bootSnap = busySnapshot();
-  host.__clearBusy = () => clearBusy(bootSnap);
 
   // =============================================================== icons
 
@@ -1761,6 +1779,7 @@ h1{font-family:"Playfair Display",Georgia,serif;font-weight:600;font-size:clamp(
 .qbar span{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--accent),var(--accent2))}
 .now-live{font-size:30px;font-weight:800;letter-spacing:-.03em;margin-top:8px;font-variant-numeric:tabular-nums;color:var(--tone)}
 .now-live small{font-size:13px;font-weight:600;color:var(--muted);letter-spacing:0}
+.now-live.next{color:var(--text)}
 
 /* grades */
 .toolbar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}

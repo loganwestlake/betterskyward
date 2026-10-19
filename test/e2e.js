@@ -21,8 +21,8 @@ function check(name, ok, detail) {
   if (!ok) failures++;
 }
 
-async function openApp(browser, url, viewport = { width: 1360, height: 900 }, time) {
-  const page = await browser.newPage({ viewport });
+async function openApp(browser, url, viewport = { width: 1360, height: 900 }, time, timezoneId) {
+  const page = await browser.newPage({ viewport, timezoneId });
   if (time) await page.clock.install({ time });
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
@@ -155,15 +155,16 @@ async function waitFor(fn, ms = 15000) {
     check('no script errors', errors.length === 0, errors);
     await page.close();
 
-    console.log('Countdowns (Mon Oct 19, 2026, 10:00 AM)');
-    ({ page, errors, q, click } = await openApp(browser, BASE, undefined, new Date(2026, 9, 19, 10, 0, 0)));
+    // Eastern time, so the Nov 1 daylight saving change falls inside Q2.
+    console.log('Countdowns (Mon Oct 19, 2026, 10:00 AM Eastern)');
+    ({ page, errors, q, click } = await openApp(browser, BASE, undefined, new Date('2026-10-19T10:00:00-04:00'), 'America/New_York'));
     check('Q2 picked from the calendar', (await q('.hero .sub'))[0]?.includes('Q2'));
     // Seconds left on the quarter countdown, read back from the screen.
     const left = async () => {
       const [d, h, m, sec] = (await q('.qclock.current .cd')).map((t) => parseInt(t, 10));
       return ((d * 24 + h) * 60 + m) * 60 + sec;
     };
-    const expected = (new Date(2026, 11, 18, 14, 10) - new Date(2026, 9, 19, 10, 0)) / 1000; // last bell is 2:10 PM
+    const expected = 60 * 86400 + 4 * 3600 + 10 * 60; // to Dec 18, 2:10 PM (last bell) by the calendar: 60 days 4:10
     const before = await left();
     check('Q2 counts down to Dec 18 after the last bell', Math.abs(before - expected) <= 5, { before, expected });
     check('Q2 progress shown', (await q('.qclock-sub'))[0]?.includes('% done'));
@@ -177,8 +178,28 @@ async function waitFor(fn, ms = 15000) {
     check('Q3 shows when it starts', (await q('.qclock.future .qclock-label'))[0] === 'Q3 starts in', await q('.glance'));
     await page.clock.runFor(4 * 60 * 1000);
     check('class change re-renders the card', (await q('.now h3'))[0] === 'Today' && (await q('.now-big'))[0] === 'Biology 1', await q('.now'));
+    check('next class counts down to its bell', /^starts in 33:\d\d$/.test((await q('.now-live'))[0] || ''), await q('.now-live'));
+    await page.clock.runFor(34 * 60 * 1000);
+    check('card flips to "Right now" when the bell rings', (await q('.now h3'))[0] === 'Right now' && (await q('.now-big'))[0] === 'Biology 1', await q('.now'));
     check('no script errors', errors.length === 0, errors);
     await page.close();
+
+    console.log('Run again while starting up');
+    {
+      const p2 = await browser.newPage();
+      const errs = [];
+      p2.on('pageerror', (e) => errs.push(e.message));
+      await p2.goto(BASE);
+      // With the grades gone, startup waits on loading the Gradebook in the
+      // background; the second run lands in that gap and turns the app off.
+      await p2.evaluate(() => document.querySelectorAll('#showGradeInfo, .classDesc').forEach((e) => e.remove()));
+      await p2.evaluate((code) => { (0, eval)(code); setTimeout(() => (0, eval)(code), 300); }, CODE);
+      await p2.waitForTimeout(6000);
+      check('app stays closed', await p2.evaluate(() => !document.getElementById('skyward-glow-host')));
+      await p2.keyboard.press('Escape'); // a leaked listener from the first run would throw here
+      check('no leftover Esc or timer errors', errs.length === 0, errs);
+      await p2.close();
+    }
 
     console.log('Two pages at once');
     for (const strict of [false, true]) {
