@@ -252,6 +252,72 @@ async function waitFor(fn, ms = 15000) {
     await page.evaluate(() => localStorage.removeItem('skywardGlow:bells'));
     await page.close();
 
+    console.log('Schedule edge cases');
+    {
+      // Typed times survive a redraw (here: switching theme mid-edit).
+      ({ page, errors, q, click } = await openApp(browser, BASE, undefined, new Date('2026-10-20T09:00:00-04:00'), 'America/New_York'));
+      await click('.side [data-view=schedule]');
+      await click('[data-act="edit-times"]');
+      const first = page.locator('#skyward-glow-host .t-in[data-edge="start"]').first();
+      await first.fill('07:01');
+      await click('.side [data-act=theme]');
+      check('typed time survives a redraw', (await page.locator('#skyward-glow-host .t-in[data-edge="start"]').first().inputValue()) === '07:01');
+      // Remove and add rows.
+      const n = (await q('.edit-name')).length;
+      await click('[data-remove="0"]');
+      check('a row can be removed', (await q('.edit-name')).length === n - 1);
+      await click('[data-add="class"][data-period="1"]');
+      check('a removed period can be added back', (await q('.edit-name')).includes('Period 1') && (await q('.edit-name')).length === n);
+      check('no script errors', errors.length === 0, errors);
+      await page.close();
+
+      // A damaged save can't stop the app from starting.
+      ({ page, errors, q, click } = await openApp(browser, BASE, undefined, new Date('2026-10-20T09:00:00-04:00'), 'America/New_York'));
+      await page.evaluate(() => localStorage.setItem('skywardGlow:bells', JSON.stringify({ regular: 'x', swarm: [null, { kind: 'class', start: 'a' }], lunch: 5 })));
+      await page.evaluate(CODE); await page.evaluate(CODE); await page.waitForTimeout(600);
+      check('app starts with damaged saved times', (await q('.stat')).length === 4, await q('.view'));
+      check('falls back to the estimate', await (async () => { await click('.side [data-view=schedule]'); return (await q('.sched-note.warn')).length === 1; })());
+      check('no script errors', errors.length === 0, errors);
+      await page.evaluate(() => localStorage.removeItem('skywardGlow:bells'));
+      await page.close();
+
+      // Two courses in the same period (semester classes) count once.
+      ({ page, errors, q, click } = await openApp(browser, BASE + '?nodefault', undefined, new Date('2026-10-19T09:00:00-04:00'), 'America/New_York'));
+      await page.evaluate(() => {
+        document.getElementById('skyward-glow-host').remove();
+        document.getElementById('left').insertAdjacentHTML('beforeend', '<tr><td scope="row" colspan="2"><div class="gb_classDesc"><span class="bld classDesc"><a>FORENSIC SCIENCE 2</a></span> <label class="bld">Period</label> 3 <span class="fXs">(9:14 AM - 10:04 AM)</span> <a>Sarah Santiago</a></div></td></tr>');
+        document.getElementById('right').insertAdjacentHTML('beforeend', '<tr><td>&nbsp;</td></tr>');
+      });
+      await page.evaluate(CODE); await page.waitForTimeout(600);
+      await click('.side [data-view=schedule]');
+      const mon = await q('.slot .slot-card b');
+      check('shared period shows once', mon.filter((t) => /Forensic/.test(t)).length === 1 && mon.length === 8, mon);
+      await click('.sched-bar [data-sched="swarm"]');
+      check('SWARM estimate unaffected', (await q('.slot .slot-card b')).length === 9);
+      check('no script errors', errors.length === 0, errors);
+      await page.close();
+
+      // No class times in Skyward: the editor still lists every period.
+      ({ page, errors, q, click } = await openApp(browser, BASE + '?nodefault', undefined, new Date('2026-10-19T09:00:00-04:00'), 'America/New_York'));
+      await page.evaluate(() => {
+        document.getElementById('skyward-glow-host').remove();
+        document.querySelectorAll('.fXs').forEach((e) => e.remove());
+        document.querySelectorAll('#left td').forEach((td) => { td.innerHTML = td.innerHTML.replace(/\([^)]*(AM|PM)[^)]*\)/g, ''); });
+      });
+      await page.evaluate(CODE); await page.waitForTimeout(600);
+      await click('.side [data-view=schedule]');
+      check('no times: explains how to add them', (await q('.empty'))[0]?.includes('Edit times'), await q('.view'));
+      await click('[data-act="edit-times"]');
+      const names = await q('.edit-name');
+      check('no times: editor lists every period and lunch', names.length === 8 && names.includes('Lunch') && names.includes('Period 7'), names);
+      await click('[data-act="save-times"]');
+      await click('[data-remove="0"]');
+      check('no times: removed period offered back', (await q('.editor-add button')).includes('+ Period 1'), await q('.editor-add'));
+      check('no times: blank rows must be filled first', (await q('.editor .sched-note.warn'))[0]?.includes('needs a start time'), await q('.editor'));
+      check('no script errors', errors.length === 0, errors);
+      await page.close();
+    }
+
     for (const [name, device] of [['iPhone', devices['iPhone 13']], ['Android', devices['Pixel 7']]]) {
       console.log(name + ' (Skyward desktop page, no phone viewport)');
       const ctx = await browser.newContext(Object.assign({}, device, { timezoneId: 'America/New_York' }));

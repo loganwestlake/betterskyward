@@ -14,7 +14,7 @@
 
   // Bump on every change. The install page and the app both show it, and
   // the app compares it with the published copy to offer updates.
-  const VERSION = '2.2.0';
+  const VERSION = '2.2.1';
   const UPDATE_URL = 'https://loganwestlake.github.io/betterskyward/glow.js';
   const INSTALL_URL = 'https://loganwestlake.github.io/betterskyward/';
 
@@ -732,7 +732,21 @@
     return null;
   }
 
-  function savedBells() { return store(BELLS_KEY) || {}; }
+  // Saved times, keeping only well-formed rows so a damaged save can never
+  // stop the app from starting.
+  function savedBells() {
+    const raw = store(BELLS_KEY);
+    const out = {};
+    if (!raw || typeof raw !== 'object') return out;
+    if (typeof raw.lunch === 'string' && /^[A-Z]$/.test(raw.lunch)) out.lunch = raw.lunch;
+    for (const type of ['regular', 'swarm']) {
+      if (!Array.isArray(raw[type])) continue;
+      const rows = raw[type].filter((r) => r && typeof r === 'object' && ['class', 'lunch', 'swarm'].includes(r.kind) &&
+        Number.isFinite(r.start) && Number.isFinite(r.end) && r.end > r.start);
+      if (rows.length) out[type] = rows.map((r) => ({ kind: r.kind, period: String(r.period || ''), start: r.start, end: r.end }));
+    }
+    return out;
+  }
 
   function lunchLetter() {
     const saved = savedBells().lunch;
@@ -744,7 +758,11 @@
   function toSlots(rows) {
     return rows.map((r) => {
       const slot = Object.assign({}, r);
-      if (r.kind === 'class') slot.course = data.courses.find((c) => periodNum(c.period) === r.period && periodNum(c.period) !== SWARM_PERIOD) || null;
+      if (r.kind === 'class') {
+        // Two semester courses can share a period; show the one graded now.
+        const inPeriod = data.courses.filter((c) => periodNum(c.period) === r.period && r.period !== SWARM_PERIOD);
+        slot.course = inPeriod.find((c) => c.grades[state.term]) || inPeriod[0] || null;
+      }
       if (r.kind === 'swarm') slot.course = data.courses.find((c) => periodNum(c.period) === SWARM_PERIOD) || null;
       return slot;
     }).sort((a, b) => a.start - b.start);
@@ -756,7 +774,9 @@
     const rows = data.courses.map((c) => {
       const parts = (c.time || '').split(/\s*-\s*/);
       return { kind: 'class', period: periodNum(c.period), start: toMinutes(parts[0]), end: toMinutes(parts[1]) };
-    }).filter((r) => r.start != null && r.end != null && r.period !== SWARM_PERIOD).sort((a, b) => a.start - b.start);
+    }).filter((r, i, all) => r.start != null && r.end != null && r.period !== SWARM_PERIOD &&
+      all.findIndex((o) => o.period === r.period && o.start != null) === i) // one row per period
+      .sort((a, b) => a.start - b.start);
     const out = [];
     rows.forEach((r, i) => {
       const prev = rows[i - 1];
@@ -1481,7 +1501,10 @@
   // The time editor: one row per slot, reorderable, with native time
   // pickers (they're the friendliest on phones).
   function editorHtml(type) {
-    if (!state.editRows) state.editRows = dayRows(type).rows.map((r) => Object.assign({}, r));
+    if (!state.editRows) {
+      const rows = dayRows(type).rows.map((r) => Object.assign({}, r));
+      state.editRows = rows.length ? rows : blankRows(type);
+    }
     const rows = state.editRows;
     const name = (r) => r.kind === 'lunch' ? 'Lunch' : r.kind === 'swarm' ? 'SWARM (Period ' + SWARM_PERIOD + ')' : 'Period ' + r.period;
     return '<div class="panel editor">' +
@@ -1494,13 +1517,36 @@
         '<span class="dash">–</span>' +
         '<input type="time" class="t-in" data-i="' + i + '" data-edge="end" value="' + (r.end != null ? hm(r.end) : '') + '" aria-label="' + esc(name(r)) + ' end">' +
         '<span class="edit-move"><button class="icon-btn mini" data-move="' + i + '" data-dir="-1" aria-label="Move up"' + (i === 0 ? ' disabled' : '') + '>↑</button>' +
-        '<button class="icon-btn mini" data-move="' + i + '" data-dir="1" aria-label="Move down"' + (i === rows.length - 1 ? ' disabled' : '') + '>↓</button></span></li>').join('') +
+        '<button class="icon-btn mini" data-move="' + i + '" data-dir="1" aria-label="Move down"' + (i === rows.length - 1 ? ' disabled' : '') + '>↓</button>' +
+        '<button class="icon-btn mini" data-remove="' + i + '" aria-label="Remove ' + esc(name(r)) + '">×</button></span></li>').join('') +
       '</ol>' +
+      '<div class="editor-add">' +
+        (rows.some((r) => r.kind === 'lunch') ? '' : '<button class="btn ghost small" data-add="lunch">+ Lunch</button>') +
+        (type === 'swarm' && !rows.some((r) => r.kind === 'swarm') ? '<button class="btn ghost small" data-add="swarm">+ SWARM</button>' : '') +
+        missingPeriods(rows).map((p) => '<button class="btn ghost small" data-add="class" data-period="' + esc(p) + '">+ Period ' + esc(p) + '</button>').join('') +
+      '</div>' +
       '<div class="editor-actions">' +
         '<button class="btn" data-act="save-times">Save</button>' +
         '<button class="btn ghost" data-act="reset-times">' + (type === 'swarm' ? 'Reset to estimate' : 'Reset to Skyward') + '</button>' +
         '<button class="btn ghost" data-act="cancel-times">Cancel</button>' +
       '</div></div>';
+  }
+
+  // Every class period Skyward lists (not SWARM), in order.
+  function coursePeriods() {
+    return [...new Set(data.courses.map((c) => periodNum(c.period)).filter((p) => p && p !== SWARM_PERIOD))]
+      .sort((a, b) => Number(a) - Number(b));
+  }
+
+  const missingPeriods = (rows) => coursePeriods().filter((p) => !rows.some((r) => r.kind === 'class' && r.period === p));
+
+  // An empty editor still lists every period so times can be typed in.
+  function blankRows(type) {
+    const rows = coursePeriods().map((p) => ({ kind: 'class', period: p, start: null, end: null }));
+    if (type === 'swarm') rows.splice(Math.min(2, rows.length), 0, { kind: 'swarm', period: SWARM_PERIOD, start: null, end: null });
+    const lunchAfter = lunch ? rows.findIndex((r) => r.period === lunch.period) : -1;
+    rows.splice(lunchAfter === -1 ? rows.length : lunchAfter, 0, { kind: 'lunch', period: '', start: null, end: null });
+    return rows;
   }
 
   // Copies whatever is typed in the time boxes back into the edit rows.
@@ -1707,6 +1753,16 @@
       state.editRows = null;
       return renderViewOnly();
     }
+    if (ds.remove) {
+      syncEditRows();
+      state.editRows.splice(Number(ds.remove), 1);
+      return renderViewOnly();
+    }
+    if (ds.add) {
+      syncEditRows();
+      state.editRows.push({ kind: ds.add, period: ds.add === 'swarm' ? SWARM_PERIOD : (ds.period || ''), start: null, end: null });
+      return renderViewOnly();
+    }
     if (ds.move) {
       syncEditRows();
       const i = Number(ds.move), j = i + Number(ds.dir);
@@ -1749,6 +1805,13 @@
   });
 
   app.addEventListener('input', (e) => {
+    // Save each typed time right away, so a redraw (theme, lunch, update
+    // banner) never wipes it.
+    if (e.target.classList.contains('t-in') && state.editRows) {
+      const r = state.editRows[Number(e.target.dataset.i)];
+      if (r) r[e.target.dataset.edge] = fromHm(e.target.value);
+      return;
+    }
     if (!e.target.classList.contains('search')) return;
     state.query = e.target.value;
     const grid = root.querySelector('.grid');
@@ -2207,6 +2270,8 @@ button.chip{cursor:pointer}
 .icon-btn.mini{width:30px;height:30px;font-size:14px}
 .icon-btn:disabled{opacity:.35;cursor:default}
 .editor-actions{display:flex;flex-wrap:wrap;gap:8px}
+.editor-add{display:flex;flex-wrap:wrap;gap:8px;margin:-6px 0 16px}
+.editor-add:empty{display:none}
 @media (max-width:560px){
   .edit-row{grid-template-columns:1fr 1fr;grid-template-areas:"name move" "start end"}
   .edit-move{justify-self:end}

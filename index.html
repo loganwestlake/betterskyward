@@ -164,7 +164,10 @@
 
     // The phone bookmark is tiny: it loads the published glow.js, so it
     // always runs the newest version and fits in a phone's bookmark editor.
-    var glowUrl = new URL('glow.js', location.href).href;
+    // Use this site's copy when it's served over the web; a page opened from
+    // a file or a local preview uses the published copy, which Skyward can reach.
+    var published = 'https://loganwestlake.github.io/betterskyward/glow.js';
+    var glowUrl = location.protocol === 'https:' || location.hostname === 'localhost' ? new URL('glow.js', location.href).href : published;
     var loader = "javascript:(function(){var s=document.createElement('script');s.src='" + glowUrl +
       "?t='+Date.now();s.onerror=function(){alert('Skyward Glow could not load. Check your internet connection and try again.')};" +
       "(document.head||document.documentElement).appendChild(s)})();void 0";
