@@ -14,7 +14,7 @@
 
   // Bump on every change. The install page and the app both show it, and
   // the app compares it with the published copy to offer updates.
-  const VERSION = '2.1.1';
+  const VERSION = '2.2.0';
   const UPDATE_URL = 'https://loganwestlake.github.io/betterskyward/glow.js';
   const INSTALL_URL = 'https://loganwestlake.github.io/betterskyward/';
 
@@ -697,23 +697,159 @@
     return h * 60 + parseInt(m[2], 10);
   }
 
-  function bellSchedule(courses) {
-    return courses.map((c) => {
-      const parts = (c.time || '').split(/\s*-\s*/);
-      return { course: c, start: toMinutes(parts[0]), end: toMinutes(parts[1]) };
-    }).filter((p) => p.start != null && p.end != null).sort((a, b) => a.start - b.start);
+  // ----------------------------------------------------------- day plans
+  //
+  // A school day is a list of slots: classes, lunch and SWARM. Mondays,
+  // Wednesdays and Fridays use the class times Skyward lists. Tuesdays and
+  // Thursdays add SWARM (the Period 8 class in Skyward), so every period
+  // shifts. Those times come from, in order: the student's own saved
+  // times, the school's official times for their lunch, or an estimate.
+
+  const SWARM_PERIOD = '8';
+  const SWARM_DAYS = [2, 4]; // Tuesday, Thursday
+  const SWARM_LENGTH = 30;
+  const PASSING = 4;
+  const BELLS_KEY = 'skywardGlow:bells';
+
+  // Official Weeki Wachee SWARM-day times, one list per lunch, once known:
+  // { B: [{ kind: 'class', period: '1', start: '7:19', end: '8:10' }, ...] }
+  const OFFICIAL_SWARM = {};
+
+  const periodNum = (p) => (String(p).match(/\d+/) || [''])[0];
+  const hm = (mins) => String(Math.floor(mins / 60)).padStart(2, '0') + ':' + String(mins % 60).padStart(2, '0');
+  const fromHm = (s) => {
+    const m = String(s || '').match(/^(\d{1,2}):(\d{2})/);
+    return m ? parseInt(m[1], 10) * 60 + parseInt(m[2], 10) : null;
+  };
+
+  // Skyward writes the lunch into the period, like "4B" for 4th period with
+  // B lunch.
+  function detectLunch(courses) {
+    for (const c of courses) {
+      const m = String(c.period).match(/^(\d+)\s*([A-Z])$/i);
+      if (m) return { period: m[1], letter: m[2].toUpperCase() };
+    }
+    return null;
   }
 
-  function nowStatus(bells) {
+  function savedBells() { return store(BELLS_KEY) || {}; }
+
+  function lunchLetter() {
+    const saved = savedBells().lunch;
+    return saved || (lunch ? lunch.letter : '');
+  }
+
+  // Turns stored rows ({kind, period, start, end} in minutes) into slots
+  // that point at the student's courses.
+  function toSlots(rows) {
+    return rows.map((r) => {
+      const slot = Object.assign({}, r);
+      if (r.kind === 'class') slot.course = data.courses.find((c) => periodNum(c.period) === r.period && periodNum(c.period) !== SWARM_PERIOD) || null;
+      if (r.kind === 'swarm') slot.course = data.courses.find((c) => periodNum(c.period) === SWARM_PERIOD) || null;
+      return slot;
+    }).sort((a, b) => a.start - b.start);
+  }
+
+  // Monday/Wednesday/Friday as Skyward lists it, with lunch filling the
+  // long gap between two classes.
+  function skywardDay() {
+    const rows = data.courses.map((c) => {
+      const parts = (c.time || '').split(/\s*-\s*/);
+      return { kind: 'class', period: periodNum(c.period), start: toMinutes(parts[0]), end: toMinutes(parts[1]) };
+    }).filter((r) => r.start != null && r.end != null && r.period !== SWARM_PERIOD).sort((a, b) => a.start - b.start);
+    const out = [];
+    rows.forEach((r, i) => {
+      const prev = rows[i - 1];
+      if (prev && r.start - prev.end >= 20) out.push({ kind: 'lunch', start: prev.end, end: r.start });
+      out.push(r);
+    });
+    return out;
+  }
+
+  // A best guess at a SWARM day: same first and last bell, SWARM after
+  // 2nd period, lunch the same length, classes shortened evenly.
+  function estimateSwarm(regular) {
+    const classes = regular.filter((r) => r.kind === 'class');
+    if (classes.length < 2) return [];
+    const lunchRow = regular.find((r) => r.kind === 'lunch');
+    const order = [];
+    regular.forEach((r) => {
+      order.push(Object.assign({}, r));
+      if (r.kind === 'class' && order.filter((o) => o.kind === 'class').length === 2) order.push({ kind: 'swarm', period: SWARM_PERIOD });
+    });
+    const span = regular[regular.length - 1].end - regular[0].start;
+    const lunchLen = lunchRow ? lunchRow.end - lunchRow.start : 0;
+    let passings = 0;
+    for (let i = 1; i < order.length; i++) if (order[i].kind !== 'lunch' && order[i - 1].kind !== 'lunch') passings++;
+    const len = Math.floor((span - SWARM_LENGTH - lunchLen - passings * PASSING) / classes.length);
+    let t = regular[0].start;
+    order.forEach((r, i) => {
+      if (i > 0 && r.kind !== 'lunch' && order[i - 1].kind !== 'lunch') t += PASSING;
+      r.start = t;
+      t += r.kind === 'lunch' ? lunchLen : r.kind === 'swarm' ? SWARM_LENGTH : len;
+      r.end = t;
+    });
+    order[order.length - 1].end = regular[regular.length - 1].end; // leftover minutes go to the last class
+    return order;
+  }
+
+  function officialSwarm() {
+    const rows = OFFICIAL_SWARM[lunchLetter()];
+    return rows ? rows.map((r) => Object.assign({}, r, { start: fromHm(r.start), end: fromHm(r.end) })) : null;
+  }
+
+  // Rows for a day type plus where they came from.
+  function dayRows(type) {
+    const saved = savedBells()[type];
+    if (saved && saved.length) return { rows: saved, source: 'yours' };
+    if (type === 'regular') return { rows: skywardDay(), source: 'skyward' };
+    const official = officialSwarm();
+    if (official) return { rows: official, source: 'school' };
+    return { rows: estimateSwarm(skywardDay()), source: 'estimated' };
+  }
+
+  const dayType = (date) => (SWARM_DAYS.includes(date.getDay()) ? 'swarm' : 'regular');
+  const isSchoolDay = (date) => date.getDay() > 0 && date.getDay() < 6;
+
+  function slotsFor(date) {
+    return isSchoolDay(date) ? toSlots(dayRows(dayType(date)).rows) : [];
+  }
+
+  function slotTitle(slot) {
+    if (slot.kind === 'lunch') return 'Lunch' + (lunchLetter() ? ' ' + lunchLetter() : '');
+    if (slot.kind === 'swarm') return 'SWARM';
+    return slot.course ? slot.course.name : 'Period ' + slot.period;
+  }
+
+  function slotSub(slot) {
+    if (slot.kind === 'lunch') return '';
+    const c = slot.course;
+    if (slot.kind === 'swarm') return c ? [c.name !== 'Swarm' && c.name !== 'SWARM' ? c.name : '', c.teacher].filter(Boolean).join(' · ') : 'Period ' + SWARM_PERIOD;
+    return c ? c.teacher : '';
+  }
+
+  function nextSchoolDay(from) {
+    const d = new Date(from);
+    do { d.setDate(d.getDate() + 1); } while (!isSchoolDay(d));
+    return d;
+  }
+
+  function nowStatus() {
     const d = new Date();
-    if (!bells.length) return null;
-    if (d.getDay() === 0 || d.getDay() === 6) return { kind: 'weekend' };
+    if (!data.courses.length) return null;
+    const slots = slotsFor(d);
+    if (!slots.length) {
+      if (isSchoolDay(d)) return null;
+      const next = nextSchoolDay(d);
+      const first = slotsFor(next)[0];
+      return first ? { kind: 'weekend', day: next, first } : null;
+    }
     const mins = d.getHours() * 60 + d.getMinutes();
-    const cur = bells.find((b) => mins >= b.start && mins < b.end);
-    if (cur) return { kind: 'now', bell: cur, left: cur.end - mins };
-    const next = bells.find((b) => b.start > mins);
-    if (next) return { kind: 'next', bell: next, in: next.start - mins };
-    return { kind: 'done' };
+    const cur = slots.find((s) => mins >= s.start && mins < s.end);
+    if (cur) return { kind: 'now', bell: cur };
+    const next = slots.find((s) => s.start > mins);
+    if (next) return { kind: 'next', bell: next };
+    return { kind: 'done', last: slots[slots.length - 1] };
   }
 
   const clock = (mins) => {
@@ -739,7 +875,8 @@
     if (!q) return null;
     const [sy, sm, sd] = q[0].split('-').map(Number);
     const [ey, em, ed] = q[1].split('-').map(Number);
-    const lastBell = bells.length ? bells[bells.length - 1].end : 16 * 60;
+    const slots = slotsFor(new Date(ey, em - 1, ed));
+    const lastBell = slots.length ? slots[slots.length - 1].end : 16 * 60;
     return {
       start: new Date(sy, sm - 1, sd, 0, 0),
       end: new Date(ey, em - 1, ed, Math.floor(lastBell / 60), lastBell % 60)
@@ -813,6 +950,7 @@
   const root = host.attachShadow({ mode: 'open' });
   document.body.appendChild(host);
   document.documentElement.style.overflow = 'hidden';
+  applyMobileViewport();
 
   if (!document.getElementById(HOST_ID + '-font')) {
     const font = document.createElement('link');
@@ -836,6 +974,10 @@
     theme: store(THEME_KEY) || 'dark',
     drawer: null,       // { key, term }
     update: null,       // newer published version, if any
+    schedDay: null,     // 'regular' or 'swarm' on the Schedule screen; null = today's
+    editing: false,     // the bell-time editor is open
+    editRows: null,
+    editError: '',
     pages: {},          // label -> { status, tables, error }
     assignments: {}     // key|term -> { status, result }
   };
@@ -862,7 +1004,7 @@
   if (!host.isConnected) return;
   const previous = store(SNAP_KEY);
   if (data.courses.length) saveSnapshot(data);
-  const bells = bellSchedule(data.courses);
+  const lunch = detectLunch(data.courses);
   state.term = data.terms.length ? pickCurrentTerm(data) : null;
 
   const VIEWS = [
@@ -968,7 +1110,7 @@
     const attention = graded.filter((c) => c.grades[state.term].score < 80)
       .sort((a, b) => a.grades[state.term].score - b.grades[state.term].score);
     const changes = recentChanges();
-    const status = nowStatus(bells);
+    const status = nowStatus();
 
     return '<section class="hero">' +
         '<p class="eyebrow">' + esc(new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })) + '</p>' +
@@ -1008,26 +1150,28 @@
 
   function nowCard(status) {
     if (!status) return '';
-    let big = '', small = '', course = null;
-    let live = '';
+    let big = '', small = '', live = '', slot = null;
+    const at = (mins, day) => { const t = day ? new Date(day) : new Date(); t.setHours(Math.floor(mins / 60), mins % 60, 0, 0); return t.getTime(); };
     if (status.kind === 'now') {
-      course = status.bell.course; big = course.name; small = 'Happening now · ends ' + clock(status.bell.end);
-      const end = new Date(); end.setHours(Math.floor(status.bell.end / 60), status.bell.end % 60, 0, 0);
-      live = '<p class="now-live">' + countdown(end.getTime(), 'short') + ' <small>left</small></p>';
+      slot = status.bell; big = slotTitle(slot); small = 'Happening now · ends ' + clock(slot.end);
+      live = '<p class="now-live">' + countdown(at(slot.end), 'short') + ' <small>left</small></p>';
     }
     if (status.kind === 'next') {
-      course = status.bell.course; big = course.name; small = 'Up next · starts ' + clock(status.bell.start);
-      const start = new Date(); start.setHours(Math.floor(status.bell.start / 60), status.bell.start % 60, 0, 0);
-      live = '<p class="now-live next"><small>starts in</small> ' + countdown(start.getTime(), 'short') + '</p>';
+      slot = status.bell; big = slotTitle(slot); small = 'Up next · starts ' + clock(slot.start);
+      live = '<p class="now-live next"><small>starts in</small> ' + countdown(at(slot.start), 'short') + '</p>';
     }
-    if (status.kind === 'done') { big = 'School\'s out'; small = 'Your last class ended at ' + clock(bells[bells.length - 1].end) + '.'; }
-    if (status.kind === 'weekend') { big = 'It\'s the weekend'; small = 'First bell Monday at ' + clock(bells[0].start) + '.'; }
-    const g = course && course.grades[state.term];
-    return '<div class="panel now tone-' + tone(g) + '">' +
+    if (status.kind === 'done') { big = 'School\'s out'; small = 'Your last class ended at ' + clock(status.last.end) + '.'; }
+    if (status.kind === 'weekend') {
+      big = 'It\'s the weekend';
+      small = 'First bell ' + status.day.toLocaleDateString(undefined, { weekday: 'long' }) + ' at ' + clock(status.first.start) + '.';
+    }
+    const course = slot && slot.course;
+    const g = slot && slot.kind === 'class' && course && course.grades[state.term];
+    const meta = slot ? [slot.kind === 'class' && course && course.period ? 'Period ' + course.period : '', slotSub(slot)].filter(Boolean).join(' · ') : '';
+    return '<div class="panel now tone-' + (slot && slot.kind !== 'class' ? 'b' : tone(g)) + '">' +
       '<div class="panel-head"><h3>' + (status.kind === 'now' ? '<span class="pulse"></span>Right now' : 'Today') + '</h3><button class="link" data-view="schedule">Schedule →</button></div>' +
       '<p class="now-big">' + esc(big) + '</p>' + live + '<p class="now-small">' + esc(small) + '</p>' +
-      (course ? '<p class="now-meta">' + esc([course.period && 'Period ' + course.period, course.teacher].filter(Boolean).join(' · ')) +
-        (g ? ' · <b>' + esc(g.raw) + '</b>' : '') + '</p>' : '') +
+      (meta || g ? '<p class="now-meta">' + esc(meta) + (g ? ' · <b>' + esc(g.raw) + '</b>' : '') + '</p>' : '') +
       '</div>';
   }
 
@@ -1280,31 +1424,123 @@
   // ------------------------------------------------------------ schedule
 
   function scheduleView() {
-    const status = nowStatus(bells);
-    const cur = status && status.kind === 'now' ? status.bell : null;
-    const mins = new Date().getHours() * 60 + new Date().getMinutes();
-    let html = header('Schedule', bells.length ? 'Your bell schedule, from the class times in Skyward.' : '');
-    if (bells.length) {
-      html += '<ol class="timeline">' + bells.map((b) => {
-        const g = b.course.grades[state.term];
-        const past = status && status.kind !== 'weekend' && mins >= b.end;
-        const pct = b === cur ? Math.round(((mins - b.start) / (b.end - b.start)) * 100) : 0;
-        return '<li class="slot tone-' + tone(g) + (b === cur ? ' current' : '') + (past ? ' past' : '') + '">' +
-          '<div class="slot-time"><b>' + clock(b.start) + '</b><small>' + clock(b.end) + '</small></div>' +
-          '<button class="slot-card" data-course="' + esc(b.course.key) + '">' +
-            '<span class="period">Period ' + esc(b.course.period) + (b === cur ? ' · now' : '') + '</span>' +
-            '<b>' + esc(b.course.name) + '</b><small>' + esc(b.course.teacher) + '</small>' +
-            (b === cur ? '<span class="progress"><span style="width:' + pct + '%"></span></span>' : '') +
-            (g ? '<span class="slot-grade">' + esc(g.raw) + '</span>' : '') +
-          '</button></li>';
-      }).join('') + '</ol>';
-    } else if (data.courses.length) {
-      html += '<p class="empty">Skyward didn\'t list class times on the gradebook.</p>';
+    const today = new Date();
+    const todayType = isSchoolDay(today) ? dayType(today) : dayType(nextSchoolDay(today));
+    const type = state.schedDay || todayType;
+    const { rows, source } = dayRows(type);
+    const slots = toSlots(rows);
+    const live = isSchoolDay(today) && type === dayType(today);
+    const mins = today.getHours() * 60 + today.getMinutes();
+    const letter = lunchLetter();
+
+    let html = header('Schedule', 'Your day, period by period. Tuesdays and Thursdays include SWARM.');
+    html += '<section class="sched-bar">' +
+      '<div class="seg" role="tablist">' +
+        '<button role="tab" class="seg-btn' + (type === 'regular' ? ' on' : '') + '" data-sched="regular">Mon · Wed · Fri</button>' +
+        '<button role="tab" class="seg-btn' + (type === 'swarm' ? ' on' : '') + '" data-sched="swarm">Tue · Thu · SWARM</button>' +
+      '</div>' +
+      '<label class="lunch-pick">Lunch <select class="lunch-select">' +
+        ['', 'A', 'B', 'C', 'D'].map((l) => '<option value="' + l + '"' + (l === (savedBells().lunch || '') ? ' selected' : '') + '>' +
+          (l || 'Auto' + (lunch ? ' (' + lunch.letter + ')' : '')) + '</option>').join('') +
+      '</select></label>' +
+      (state.editing ? '' : '<button class="btn ghost small" data-act="edit-times">Edit times</button>') +
+    '</section>';
+
+    if (state.editing) return html + editorHtml(type);
+
+    const notes = {
+      yours: 'Using the times you entered.',
+      skyward: 'Times from Skyward. Lunch is the gap between classes.',
+      school: 'Official SWARM-day times for lunch ' + letter + '.',
+      estimated: 'These SWARM-day times are an estimate. Tap Edit times and enter your school\'s real schedule so the countdowns are right.'
+    };
+    html += '<p class="sched-note' + (source === 'estimated' ? ' warn' : '') + '">' + esc(notes[source]) + '</p>';
+
+    if (!slots.length) {
+      return html + '<p class="empty">' + (data.courses.length ? 'No class times yet. Tap Edit times to add them.' : 'Open your Skyward Gradebook to load your classes.') + '</p>';
     }
-    if (scheduleNav) {
-      html += '<div class="section-gap"></div>' + pageBlock(scheduleNav, 'Full schedule from Skyward');
-    }
+    html += '<ol class="timeline">' + slots.map((sl) => {
+      const g = sl.kind === 'class' && sl.course && sl.course.grades[state.term];
+      const cur = live && mins >= sl.start && mins < sl.end;
+      const past = live && mins >= sl.end;
+      const pct = cur ? Math.round(((mins - sl.start) / (sl.end - sl.start)) * 100) : 0;
+      const label = sl.kind === 'lunch' ? 'Lunch' : sl.kind === 'swarm' ? 'Period ' + SWARM_PERIOD + ' · SWARM' : 'Period ' + (sl.course ? sl.course.period : sl.period);
+      return '<li class="slot slot-' + sl.kind + ' tone-' + (sl.kind === 'class' ? tone(g) : 'b') + (cur ? ' current' : '') + (past ? ' past' : '') + '">' +
+        '<div class="slot-time"><b>' + clock(sl.start) + '</b><small>' + clock(sl.end) + '</small></div>' +
+        '<button class="slot-card"' + (sl.course ? ' data-course="' + esc(sl.course.key) + '"' : ' disabled') + '>' +
+          '<span class="period">' + esc(label) + (cur ? ' · now' : '') + '</span>' +
+          '<b>' + esc(slotTitle(sl)) + '</b>' + (slotSub(sl) ? '<small>' + esc(slotSub(sl)) + '</small>' : '') +
+          (cur ? '<span class="progress"><span style="width:' + pct + '%"></span></span>' : '') +
+          (g ? '<span class="slot-grade">' + esc(g.raw) + '</span>' : '') +
+        '</button></li>';
+    }).join('') + '</ol>';
+    if (scheduleNav) html += '<div class="section-gap"></div>' + pageBlock(scheduleNav, 'Full schedule from Skyward');
     return html;
+  }
+
+  // The time editor: one row per slot, reorderable, with native time
+  // pickers (they're the friendliest on phones).
+  function editorHtml(type) {
+    if (!state.editRows) state.editRows = dayRows(type).rows.map((r) => Object.assign({}, r));
+    const rows = state.editRows;
+    const name = (r) => r.kind === 'lunch' ? 'Lunch' : r.kind === 'swarm' ? 'SWARM (Period ' + SWARM_PERIOD + ')' : 'Period ' + r.period;
+    return '<div class="panel editor">' +
+      '<h3>' + (type === 'swarm' ? 'Tuesday & Thursday (SWARM) times' : 'Monday, Wednesday & Friday times') + '</h3>' +
+      '<p class="sched-note">Enter the start and end of each period for your lunch. Use the arrows to change the order.</p>' +
+      (state.editError ? '<p class="sched-note warn">' + esc(state.editError) + '</p>' : '') +
+      '<ol class="edit-rows">' + rows.map((r, i) =>
+        '<li class="edit-row"><span class="edit-name">' + esc(name(r)) + '</span>' +
+        '<input type="time" class="t-in" data-i="' + i + '" data-edge="start" value="' + (r.start != null ? hm(r.start) : '') + '" aria-label="' + esc(name(r)) + ' start">' +
+        '<span class="dash">–</span>' +
+        '<input type="time" class="t-in" data-i="' + i + '" data-edge="end" value="' + (r.end != null ? hm(r.end) : '') + '" aria-label="' + esc(name(r)) + ' end">' +
+        '<span class="edit-move"><button class="icon-btn mini" data-move="' + i + '" data-dir="-1" aria-label="Move up"' + (i === 0 ? ' disabled' : '') + '>↑</button>' +
+        '<button class="icon-btn mini" data-move="' + i + '" data-dir="1" aria-label="Move down"' + (i === rows.length - 1 ? ' disabled' : '') + '>↓</button></span></li>').join('') +
+      '</ol>' +
+      '<div class="editor-actions">' +
+        '<button class="btn" data-act="save-times">Save</button>' +
+        '<button class="btn ghost" data-act="reset-times">' + (type === 'swarm' ? 'Reset to estimate' : 'Reset to Skyward') + '</button>' +
+        '<button class="btn ghost" data-act="cancel-times">Cancel</button>' +
+      '</div></div>';
+  }
+
+  // Copies whatever is typed in the time boxes back into the edit rows.
+  function syncEditRows() {
+    for (const input of root.querySelectorAll('.t-in')) {
+      const r = state.editRows[Number(input.dataset.i)];
+      if (r) r[input.dataset.edge] = fromHm(input.value);
+    }
+  }
+
+  function saveTimes() {
+    syncEditRows();
+    const rows = state.editRows;
+    const bad = rows.find((r) => r.start == null || r.end == null || r.end <= r.start);
+    if (bad) {
+      state.editError = (bad.kind === 'class' ? 'Period ' + bad.period : bad.kind === 'lunch' ? 'Lunch' : 'SWARM') + ' needs a start time before its end time.';
+      return renderViewOnly();
+    }
+    const sorted = rows.slice().sort((a, b) => a.start - b.start);
+    const overlap = sorted.find((r, i) => i > 0 && r.start < sorted[i - 1].end);
+    if (overlap) {
+      state.editError = 'Two periods overlap around ' + clock(overlap.start) + '. Check the times.';
+      return renderViewOnly();
+    }
+    const saved = savedBells();
+    saved[state.schedDay || currentSchedType()] = sorted;
+    store(BELLS_KEY, saved);
+    closeEditor();
+  }
+
+  function currentSchedType() {
+    const today = new Date();
+    return isSchoolDay(today) ? dayType(today) : dayType(nextSchoolDay(today));
+  }
+
+  function closeEditor() {
+    state.editing = false;
+    state.editRows = null;
+    state.editError = '';
+    renderViewOnly();
   }
 
   // ------------------------------------------------------- skyward pages
@@ -1443,6 +1679,9 @@
   function go(view) {
     state.view = view;
     state.drawer = null;
+    state.editing = false;
+    state.editRows = null;
+    state.editError = '';
     render();
     const main = root.querySelector('.main');
     if (main) main.scrollTop = 0;
@@ -1462,7 +1701,34 @@
     }
     if (ds.course) return openDrawer(ds.course, ds.t);
     if (ds.skyward) return openInSkyward(nav.find((n) => n.label === ds.skyward).el);
+    if (ds.sched) {
+      state.schedDay = ds.sched;
+      state.editing = false;
+      state.editRows = null;
+      return renderViewOnly();
+    }
+    if (ds.move) {
+      syncEditRows();
+      const i = Number(ds.move), j = i + Number(ds.dir);
+      const rows = state.editRows;
+      if (j >= 0 && j < rows.length) [rows[i], rows[j]] = [rows[j], rows[i]];
+      return renderViewOnly();
+    }
     switch (ds.act) {
+      case 'edit-times':
+        state.schedDay = state.schedDay || currentSchedType();
+        state.editing = true;
+        return renderViewOnly();
+      case 'save-times': return saveTimes();
+      case 'cancel-times': return closeEditor();
+      case 'reset-times': {
+        const saved = savedBells();
+        delete saved[state.schedDay || currentSchedType()];
+        store(BELLS_KEY, saved);
+        state.editRows = null;
+        state.editError = '';
+        return renderViewOnly();
+      }
       case 'close': return teardown();
       case 'print': return window.print();
       case 'report': return report();
@@ -1491,6 +1757,12 @@
 
   app.addEventListener('change', (e) => {
     if (e.target.classList.contains('sort')) { state.sort = e.target.value; renderViewOnly(); }
+    if (e.target.classList.contains('lunch-select')) {
+      const saved = savedBells();
+      if (e.target.value) saved.lunch = e.target.value; else delete saved.lunch;
+      store(BELLS_KEY, saved);
+      renderViewOnly();
+    }
   });
 
   function onKey(e) {
@@ -1510,6 +1782,7 @@
     if (!el || !document.contains(el)) return;
     host.style.display = 'none';
     document.documentElement.style.overflow = '';
+    restoreViewport();
     showBackPill();
     el.click();
   }
@@ -1519,13 +1792,14 @@
     const pill = document.createElement('button');
     pill.id = HOST_ID + '-back';
     pill.textContent = '✦ Back to Glow';
-    pill.style.cssText = 'position:fixed;right:20px;bottom:20px;z-index:2147483647;padding:12px 18px;border:0;border-radius:999px;' +
+    pill.style.cssText = 'position:fixed;right:20px;bottom:calc(20px + env(safe-area-inset-bottom));z-index:2147483647;padding:12px 18px;border:0;border-radius:999px;' +
       'font:600 14px Inter,system-ui,sans-serif;color:#0A0A0A;background:linear-gradient(135deg,#F59E0B,#EA580C);' +
       'box-shadow:0 10px 30px rgba(234,88,12,.45);cursor:pointer;';
     pill.onclick = () => {
       removeBackPill();
       host.style.display = '';
       document.documentElement.style.overflow = 'hidden';
+      applyMobileViewport();
     };
     document.body.appendChild(pill);
   }
@@ -1535,7 +1809,50 @@
     if (p) p.remove();
   }
 
+  // Skyward's desktop pages don't tell phones to use the screen width, so
+  // they render zoomed out. While the app is open, ask for the real width;
+  // put Skyward's own setting back when the app closes.
+  function isPhone() {
+    return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+      (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent)) ||
+      (window.matchMedia && matchMedia('(pointer: coarse)').matches);
+  }
+
+  function applyMobileViewport() {
+    if (!isPhone()) return;
+    let meta = document.querySelector('meta[name="viewport"]');
+    if (!meta) {
+      meta = document.createElement('meta');
+      meta.name = 'viewport';
+      meta.setAttribute('data-glow-added', '');
+      document.head.appendChild(meta);
+    } else if (!meta.hasAttribute('data-glow-added') && !meta.hasAttribute('data-glow-original')) {
+      meta.setAttribute('data-glow-original', meta.getAttribute('content') || '');
+    }
+    meta.setAttribute('content', 'width=device-width, initial-scale=1, minimum-scale=1, viewport-fit=cover, shrink-to-fit=no');
+    // Skyward's wide tables would otherwise make the phone zoom out to fit them.
+    if (!document.body.hasAttribute('data-glow-overflow')) document.body.setAttribute('data-glow-overflow', document.body.style.overflow || '');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function restoreViewport() {
+    if (document.body.hasAttribute('data-glow-overflow')) {
+      document.body.style.overflow = document.body.getAttribute('data-glow-overflow');
+      document.body.removeAttribute('data-glow-overflow');
+    }
+    const meta = document.querySelector('meta[name="viewport"]');
+    if (!meta) return;
+    // Browsers keep the last viewport if the tag is just removed, so put
+    // back the default desktop width (980px) that Skyward had without one.
+    if (meta.hasAttribute('data-glow-added')) meta.setAttribute('content', 'width=980');
+    else if (meta.hasAttribute('data-glow-original')) {
+      meta.setAttribute('content', meta.getAttribute('data-glow-original'));
+      meta.removeAttribute('data-glow-original');
+    }
+  }
+
   function teardown() {
+    restoreViewport();
     const h = document.getElementById(HOST_ID);
     if (h) {
       clearInterval(h.__ticker);
@@ -1571,6 +1888,9 @@
       'Menu links: ' + nav.map((n) => n.label + ' [' + n.el.tagName.toLowerCase() + (navTarget(n.el) ? ' → ' + navTarget(n.el) : '') +
         (isVisible(n.el) ? '' : ', hidden') + ']').join(', '),
       'Hidden field names: ' + sessionFields().map((f) => f[0]).join(', '),
+      'Schedule: lunch ' + (lunchLetter() || 'unknown') + (lunch ? ' (Skyward says ' + lunch.period + lunch.letter + ')' : '') +
+        ' · Mon/Wed/Fri ' + dayRows('regular').source + ' · Tue/Thu ' + dayRows('swarm').source +
+        ' · Period ' + SWARM_PERIOD + ': ' + ((data.courses.find((c) => periodNum(c.period) === SWARM_PERIOD) || {}).name || 'not in Skyward'),
       'Forms: ' + $$(document, 'form').map((f) => (f.id || f.name || 'form') + ' ' + (f.getAttribute('method') || 'get') + ' ' +
         (f.getAttribute('action') || '').split('?')[0] + ' (' + f.elements.length + ' fields)').join(', '),
       'First menu link: ' + (nav[0] ? nav[0].el.outerHTML.replace(/\s+/g, ' ').slice(0, 400) : '-')
@@ -1648,13 +1968,14 @@
     return `
 :host{all:initial}
 *{box-sizing:border-box;margin:0}
-button{font:inherit;color:inherit}
+button{font:inherit;color:inherit;touch-action:manipulation}
 .app{
   --bg:#09090B;--surface:#131316;--surface2:#1B1B1F;--line:#26262B;--text:#F2F2F3;--muted:#9C9CA4;
   --accent:#F59E0B;--accent2:#EA580C;--glow:rgba(245,158,11,.14);
   --a:#34D399;--b:#60A5FA;--c:#FBBF24;--d:#FB923C;--f:#F87171;--none:#52525B;
   --shadow:0 1px 0 rgba(255,255,255,.04) inset,0 10px 30px -12px rgba(0,0,0,.6);
   position:absolute;inset:0;display:grid;grid-template-columns:260px 1fr;background:var(--bg);color:var(--text);cursor:default;
+  -webkit-text-size-adjust:100%;text-size-adjust:100%;-webkit-tap-highlight-color:transparent;
   font:15px/1.5 Inter,system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased;overflow:hidden}
 .app[data-theme="light"]{
   --bg:#FAF8F5;--surface:#FFFFFF;--surface2:#F3EFE9;--line:#E8E2D9;--text:#1C1917;--muted:#6F6861;--glow:rgba(245,158,11,.18);
@@ -1679,7 +2000,7 @@ button{font:inherit;color:inherit}
 
 /* sidebar */
 .side{position:relative;z-index:2;display:flex;flex-direction:column;gap:22px;padding:22px 16px;border-right:1px solid var(--line);
-  background:color-mix(in srgb,var(--surface) 70%,transparent);backdrop-filter:blur(20px)}
+  background:color-mix(in srgb,var(--surface) 70%,transparent);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px)}
 .brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:17px;letter-spacing:-.01em;padding:0 8px}
 .brand em,h1 em{font-family:"Playfair Display",Georgia,serif;font-style:italic;font-weight:500;
   background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;background-clip:text;color:transparent}
@@ -1823,7 +2144,7 @@ button.chip{cursor:pointer}
 .spark path{fill:none;stroke:var(--tone);stroke-width:2;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke;opacity:.85}
 
 /* drawer */
-.scrim{position:absolute;inset:0;z-index:8;background:rgba(0,0,0,.5);backdrop-filter:blur(3px);animation:fadein .2s ease both}
+.scrim{position:absolute;inset:0;z-index:8;background:rgba(0,0,0,.5);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);animation:fadein .2s ease both}
 @keyframes fadein{from{opacity:0}}
 .drawer{position:absolute;top:0;right:0;bottom:0;z-index:9;width:min(520px,100%);display:flex;flex-direction:column;background:var(--bg);border-left:1px solid var(--line);
   box-shadow:-30px 0 60px -20px rgba(0,0,0,.5);animation:slide .3s cubic-bezier(.2,.8,.2,1) both}
@@ -1865,6 +2186,35 @@ button.chip{cursor:pointer}
 .section-gap{height:36px}
 .block-title{font-size:18px;margin-bottom:14px}
 
+/* schedule controls + editor */
+.sched-bar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:12px}
+.sched-bar .seg{width:auto}
+.lunch-pick{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:var(--muted)}
+.lunch-select{font:600 14px Inter,system-ui,sans-serif;color:var(--text);background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:7px 10px}
+.btn.small{padding:8px 12px;font-size:13px}
+.sched-note{color:var(--muted);font-size:13px;margin:0 0 14px}
+.sched-note.warn{color:var(--c);background:color-mix(in srgb,var(--c) 10%,transparent);border:1px solid color-mix(in srgb,var(--c) 30%,transparent);border-radius:12px;padding:10px 12px}
+.slot-lunch .slot-card,.slot-swarm .slot-card{border-left-color:var(--b)}
+.slot-lunch .slot-card{background:repeating-linear-gradient(135deg,var(--surface),var(--surface) 10px,var(--surface2) 10px,var(--surface2) 20px)}
+.slot-card:disabled{cursor:default}
+.editor h3{font-size:16px;margin-bottom:6px}
+.edit-rows{list-style:none;padding:0;display:flex;flex-direction:column;gap:8px;margin:6px 0 16px}
+.edit-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto auto auto;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--line);border-radius:12px;background:var(--surface2)}
+.edit-name{font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.t-in{font:600 14px Inter,system-ui,sans-serif;color:var(--text);background:var(--surface);border:1px solid var(--line);border-radius:9px;padding:6px 8px;color-scheme:light dark;min-width:0}
+.dash{color:var(--muted)}
+.edit-move{display:flex;gap:4px}
+.icon-btn.mini{width:30px;height:30px;font-size:14px}
+.icon-btn:disabled{opacity:.35;cursor:default}
+.editor-actions{display:flex;flex-wrap:wrap;gap:8px}
+@media (max-width:560px){
+  .edit-row{grid-template-columns:1fr 1fr;grid-template-areas:"name move" "start end"}
+  .edit-move{justify-self:end}
+  .edit-name{grid-area:name}.edit-move{grid-area:move}.dash{display:none}
+  .edit-row .t-in[data-edge="start"]{grid-area:start}.edit-row .t-in[data-edge="end"]{grid-area:end}
+  .sched-bar .seg{width:100%}
+}
+
 /* skyward pages */
 .tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
 .tile{display:flex;align-items:center;gap:14px;padding:18px;border-radius:18px;border:1px solid var(--line);background:var(--surface);cursor:pointer;text-align:left;box-shadow:var(--shadow);transition:all .15s}
@@ -1900,11 +2250,11 @@ tr.group td{font-weight:700;color:var(--accent);background:color-mix(in srgb,var
   .app{grid-template-columns:1fr;grid-template-rows:auto 1fr auto}
   .side{display:none}
   .mtop{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--line);
-    background:color-mix(in srgb,var(--surface) 80%,transparent);backdrop-filter:blur(20px);position:relative;z-index:3}
+    background:color-mix(in srgb,var(--surface) 80%,transparent);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);position:relative;z-index:3}
   .mtop .brand{padding:0}
   .mtop-actions{display:flex;gap:6px}
   .tabbar{display:flex;justify-content:space-around;padding:6px 6px calc(6px + env(safe-area-inset-bottom));border-top:1px solid var(--line);
-    background:color-mix(in srgb,var(--surface) 88%,transparent);backdrop-filter:blur(20px);position:relative;z-index:3}
+    background:color-mix(in srgb,var(--surface) 88%,transparent);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);position:relative;z-index:3}
   .tabbar .nav-item{flex-direction:column;gap:3px;font-size:11px;padding:6px 4px;flex:1;align-items:center}
   .tabbar .nav-item.on{background:none;box-shadow:none;color:var(--accent)}
   .home-grid{grid-template-columns:1fr}
@@ -1916,6 +2266,22 @@ tr.group td{font-weight:700;color:var(--accent);background:color-mix(in srgb,var
   .grid{grid-template-columns:1fr}
   .slot{grid-template-columns:64px 1fr;gap:10px}
 }
+/* phones and tablets */
+.main{overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+@media (max-width:900px){
+  .mtop{padding-top:calc(12px + env(safe-area-inset-top));padding-left:calc(16px + env(safe-area-inset-left));padding-right:calc(16px + env(safe-area-inset-right))}
+  .icon-btn{width:44px;height:44px}
+  .icon-btn.mini{width:36px;height:36px}
+  .tabbar .nav-item{min-height:52px}
+  .drawer{width:100%;border-left:0;padding-top:env(safe-area-inset-top)}
+  .drawer-foot{padding-bottom:calc(14px + env(safe-area-inset-bottom))}
+  .view{padding-left:calc(16px + env(safe-area-inset-left));padding-right:calc(16px + env(safe-area-inset-right))}
+}
+/* iOS zooms into any text box under 16px when it's tapped. */
+@media (pointer:coarse){.search,.sort,.lunch-select,.t-in,textarea{font-size:16px!important}}
+/* Hover lifts only where there's a mouse; on touch they stick after a tap. */
+@media (hover:none){.card:hover,.slot-card:hover,.btn:hover{transform:none}.tile:hover>svg{transform:none}}
+
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 @media print{.side,.mtop,.tabbar,.toolbar,.ambient,.scrim,.drawer{display:none}.app{position:static;display:block;overflow:visible}.main{overflow:visible}.card{break-inside:avoid;animation:none}}
 `;

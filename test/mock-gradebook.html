@@ -37,13 +37,15 @@ var classes=[
  ['Biology 1','Shayna Carr','4B','10:38 AM - 11:28 AM',[98,0,49,null,null,null,null,null,49],'split'],
  ['Leadership Skills Development','Sofia Vance','5','11:32 AM - 12:22 PM',[90,100,95,null,null,null,null,null,95]],
  ['Spanish 1','Marlise Linauer','6','12:26 PM-1:16 PM',[90,0,null,null,null,null,null,null,null]],
- ['Geometry','Colleen Scroggins','7','1:20 PM - 2:10 PM',[90,100,95,null,null,null,null,null,95]]];
+ ['Geometry','Colleen Scroggins','7','1:20 PM - 2:10 PM',[90,100,95,null,null,null,null,null,95]],
+ // SWARM is Period 8 in Skyward, with no time or grades of its own.
+ ['SWARM','Daniel Reyes','8','',[null,null,null,null,null,null,null,null,null]]];
 document.getElementById('hdr').innerHTML=terms.map(t=>'<th>'+t+'</th>').join('');
 classes.forEach(function(c,i){
  var left = c[5]==='split'
    // Name alone in its cell; period and a plain-text teacher in the next cell.
    ? '<tr><td scope="row"><span class="bld classDesc"><a href="javascript:void(0)">'+c[0]+'</a></span></td><td>Period '+c[2]+' ('+c[3]+') '+c[1]+'</td></tr>'
-   : '<tr><td scope="row" colspan="2"><div class="gb_classDesc"><span class="bld classDesc"><a href="javascript:void(0)">'+c[0]+'</a></span> <label class="bld">Period</label> '+c[2]+' <span class="fXs">('+c[3]+')</span> <a href="javascript:void(0)">'+c[1]+'</a></div></td></tr>';
+   : '<tr><td scope="row" colspan="2"><div class="gb_classDesc"><span class="bld classDesc"><a href="javascript:void(0)">'+c[0]+'</a></span> <label class="bld">Period</label> '+c[2]+' '+(c[3]?'<span class="fXs">('+c[3]+')</span>':'')+' <a href="javascript:void(0)">'+c[1]+'</a></div></td></tr>';
  document.getElementById('left').insertAdjacentHTML('beforeend',left);
  document.getElementById('right').insertAdjacentHTML('beforeend','<tr>'+c[4].map(function(g,j){return '<td'+(j===CUR?' style="background:#fff3b0"':'')+'>'+(g==null?'&nbsp;':'<a id="showGradeInfo" href="javascript:void(0)" data-cni="'+(9000+i)+'" data-lit="'+terms[j]+'">'+g+'</a>')+'</td>'}).join('')+'</tr>');
 });

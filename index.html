@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Skyward Glow</title>
   <meta name="description" content="A redesigned Skyward Family Access: grades, assignments, schedule, attendance and more. Runs in your browser on your own Skyward page.">
   <meta name="color-scheme" content="dark">
@@ -29,6 +29,14 @@
     kbd { font:600 12px ui-monospace, monospace; background:#1f1f1f; border:1px solid var(--line); border-bottom-width:2px; border-radius:6px; padding:1px 6px; color:var(--text); }
     .note { font-size:13px; margin-top:28px; }
     .ver { display:inline-block; vertical-align:middle; font:600 13px Inter, system-ui, sans-serif; color:var(--muted); border:1px solid var(--line); border-radius:99px; padding:3px 10px; letter-spacing:.02em; }
+    .platforms { display:flex; gap:4px; padding:4px; background:var(--surface); border:1px solid var(--line); border-radius:14px; margin-bottom:14px; }
+    .platforms button { flex:1; font:600 14px Inter, system-ui, sans-serif; padding:10px 8px; border:0; border-radius:10px; background:none; color:var(--muted); cursor:pointer; min-height:44px; }
+    .platforms button[aria-selected="true"] { background:linear-gradient(135deg, var(--accent), var(--accent2)); color:#0A0A0A; }
+    .step h2 + ol { margin-top:8px; }
+    .step ol + h2 { margin-top:18px; }
+    .glyph { font-size:14px; }
+    .manual { width:100%; height:120px; margin:0 0 14px; font:12px ui-monospace, monospace; color:var(--text); background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:10px; }
+    main { padding-left:max(16px, env(safe-area-inset-left)); padding-right:max(16px, env(safe-area-inset-right)); }
     .status { font-size:13px; color:var(--accent); margin-left:10px; }
   </style>
 </head>
@@ -37,42 +45,136 @@
     <h1>Skyward <em>Glow</em> <span class="ver" id="ver">loading…</span></h1>
     <p class="lede">A redesigned Skyward. A home screen with what's happening now, grades with every assignment, your schedule as a timeline, attendance, and the rest of Skyward's menu, all in one app. It reads the Skyward you're already logged in to. Your grades only ever go between your browser and Skyward.</p>
 
-    <section class="step">
-      <span class="tag">Option A · easiest</span>
-      <h2>Save it as a bookmark</h2>
-      <ol>
-        <li>Show your bookmarks bar (<kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>B</kbd>).</li>
-        <li>Drag this button onto the bar:</li>
-      </ol>
-      <a class="btn" id="bookmarklet" href="#" aria-disabled="true" onclick="return false">✦ Skyward Glow</a>
-      <p class="note" style="margin-top:10px">Updating? Delete your old bookmark first, then drag this one. The app tells you when a new version is out.</p>
-      <ol start="3">
-        <li>Log in to Skyward, open <strong>Gradebook</strong>, then click the bookmark. (Gradebook works best: that's where your grades and assignments come from.)</li>
-      </ol>
-    </section>
+    <nav class="platforms" role="tablist" aria-label="Your device">
+      <button role="tab" data-platform="ios">iPhone / iPad</button>
+      <button role="tab" data-platform="android">Android</button>
+      <button role="tab" data-platform="computer">Computer</button>
+    </nav>
 
-    <section class="step">
-      <span class="tag">Option B</span>
-      <h2>Paste it into the console</h2>
-      <ol>
-        <li>Open Skyward → <strong>Gradebook</strong>.</li>
-        <li>Press <kbd>F12</kbd> (or <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>J</kbd>) and open the <strong>Console</strong> tab.</li>
-        <li>Paste the code and press <kbd>Enter</kbd>. Chrome may ask you to type <kbd>allow pasting</kbd> first.</li>
-      </ol>
-      <button class="btn ghost" id="copy" disabled>Copy the code</button><span class="status" id="status"></span>
-    </section>
+    <!-- iPhone / iPad: Safari runs bookmarks that start with "javascript:". -->
+    <div class="platform" data-for="ios">
+      <section class="step">
+        <span class="tag">iPhone · iPad · Safari</span>
+        <h2>Set up the bookmark (once)</h2>
+        <ol>
+          <li>Tap <strong>Copy the bookmark code</strong>:<br>
+            <button class="btn copy-loader" disabled>Copy the bookmark code</button> <span class="status loader-status"></span></li>
+          <li>Tap the <strong>Share</strong> button <span class="glyph">⬆︎</span>, then <strong>Add Bookmark</strong>. Name it <strong>Skyward Glow</strong> and tap <strong>Save</strong>.</li>
+          <li>Tap the <strong>Bookmarks</strong> button <span class="glyph">📖</span>, then <strong>Edit</strong>, and tap <strong>Skyward Glow</strong>.</li>
+          <li>Tap the address under the name, delete it all, <strong>paste</strong>, then tap <strong>Done</strong>.</li>
+        </ol>
+        <h2>Use it</h2>
+        <ol>
+          <li>Open Skyward in <strong>Safari</strong> (the website, not the Skyward app), log in, and go to <strong>Gradebook</strong>.</li>
+          <li>Tap the <strong>Bookmarks</strong> button <span class="glyph">📖</span> and tap <strong>Skyward Glow</strong>.</li>
+        </ol>
+        <p class="note">If Skyward shows its phone layout instead of the full site, tap <strong>aA</strong> in the address bar → <strong>Request Desktop Website</strong>, then open Gradebook again.</p>
+      </section>
+    </div>
+
+    <!-- Android: Chrome runs a "javascript:" bookmark when you pick it from the address bar. -->
+    <div class="platform" data-for="android">
+      <section class="step">
+        <span class="tag">Android · Chrome</span>
+        <h2>Set up the bookmark (once)</h2>
+        <ol>
+          <li>Tap <strong>Copy the bookmark code</strong>:<br>
+            <button class="btn copy-loader" disabled>Copy the bookmark code</button> <span class="status loader-status"></span></li>
+          <li>Tap <strong>⋮</strong> (top right), then the <strong>☆ star</strong> to bookmark this page.</li>
+          <li>Tap <strong>⋮</strong> → <strong>Bookmarks</strong>, then <strong>⋮</strong> next to the new bookmark → <strong>Edit</strong>.</li>
+          <li>Change the name to <strong>Skyward Glow</strong>. Clear the URL, <strong>paste</strong>, and tap back to save.</li>
+        </ol>
+        <h2>Use it</h2>
+        <ol>
+          <li>Open Skyward in <strong>Chrome</strong> (the website, not the Skyward app), log in, and go to <strong>Gradebook</strong>.</li>
+          <li>Tap the address bar, type <strong>Skyward Glow</strong>, and tap the result with the <strong>☆ star</strong>. Picking it from the Bookmarks menu won't work; Chrome only runs it from the address bar.</li>
+        </ol>
+        <p class="note">If Skyward shows its phone layout, tap <strong>⋮</strong> → <strong>Desktop site</strong>, then open Gradebook again.</p>
+      </section>
+    </div>
+
+    <div class="platform" data-for="computer">
+      <section class="step">
+        <span class="tag">Option A · easiest</span>
+        <h2>Save it as a bookmark</h2>
+        <ol>
+          <li>Show your bookmarks bar (<kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>B</kbd>).</li>
+          <li>Drag this button onto the bar:</li>
+        </ol>
+        <a class="btn" id="bookmarklet" href="#" aria-disabled="true" onclick="return false">✦ Skyward Glow</a>
+        <p class="note" style="margin-top:10px">Updating? Delete your old bookmark first, then drag this one. The app tells you when a new version is out.</p>
+        <ol start="3">
+          <li>Log in to Skyward, open <strong>Gradebook</strong>, then click the bookmark.</li>
+        </ol>
+      </section>
+
+      <section class="step">
+        <span class="tag">Option B</span>
+        <h2>Paste it into the console</h2>
+        <ol>
+          <li>Open Skyward → <strong>Gradebook</strong>.</li>
+          <li>Press <kbd>F12</kbd> (or <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>J</kbd>) and open the <strong>Console</strong> tab.</li>
+          <li>Paste the code and press <kbd>Enter</kbd>. Chrome may ask you to type <kbd>allow pasting</kbd> first.</li>
+        </ol>
+        <button class="btn ghost" id="copy" disabled>Copy the code</button><span class="status" id="status"></span>
+      </section>
+    </div>
 
     <section class="step">
       <span class="tag">Try it first</span>
       <h2>Practice on a fake gradebook</h2>
-      <p>Open the practice page, which has made-up grades, and test Option A or B there before trying it on real Skyward.</p>
+      <p>Open the practice page, which has made-up grades, and run Skyward Glow there before trying it on real Skyward.</p>
       <a class="btn ghost" href="test/mock-gradebook.html">Open the practice page</a>
     </section>
 
-    <p class="note">Press <kbd>Esc</kbd> or click <strong>Original Skyward</strong> to get plain Skyward back. Something look wrong? Click the flag button in the app, copy the report, and send it over so it can be fixed. If your school laptop blocks the console and bookmarklets, neither option will work there; use a personal computer.</p>
+    <textarea id="manual" class="manual" readonly hidden aria-label="Bookmark code"></textarea>
+
+    <p class="note">The phone bookmark always loads the newest version, so you never have to update it. Tap <strong>Original Skyward</strong> (or press <kbd>Esc</kbd>) to get plain Skyward back. Something look wrong? Tap the flag button in the app, copy the report, and send it over. School-managed devices may block bookmarks like this; a personal phone or computer works.</p>
   </main>
 
   <script>
+    // Show the steps for the device in hand; the other tabs stay one tap away.
+    (function () {
+      var ua = navigator.userAgent;
+      var guess = /iPhone|iPad|iPod/.test(ua) || (navigator.maxTouchPoints > 1 && /Macintosh/.test(ua)) ? 'ios'
+        : /Android/.test(ua) ? 'android' : 'computer';
+      function show(name) {
+        document.querySelectorAll('.platform').forEach(function (el) { el.hidden = el.dataset.for !== name; });
+        document.querySelectorAll('[data-platform]').forEach(function (b) { b.setAttribute('aria-selected', b.dataset.platform === name); });
+      }
+      document.querySelectorAll('[data-platform]').forEach(function (b) { b.onclick = function () { show(b.dataset.platform); }; });
+      show(guess);
+    })();
+
+    // Copies text, falling back to a selected text box where the clipboard
+    // is blocked (older iOS).
+    function copyText(text, statusEls, okMsg) {
+      function say(msg) { statusEls.forEach(function (el) { el.textContent = msg; }); }
+      function manual() {
+        var box = document.getElementById('manual');
+        box.hidden = false;
+        box.value = text;
+        box.focus();
+        box.select();
+        say('Select all the text in the box below and copy it.');
+      }
+      if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(function () { say(okMsg); }, manual);
+      else manual();
+    }
+
+    // The phone bookmark is tiny: it loads the published glow.js, so it
+    // always runs the newest version and fits in a phone's bookmark editor.
+    var glowUrl = new URL('glow.js', location.href).href;
+    var loader = "javascript:(function(){var s=document.createElement('script');s.src='" + glowUrl +
+      "?t='+Date.now();s.onerror=function(){alert('Skyward Glow could not load. Check your internet connection and try again.')};" +
+      "(document.head||document.documentElement).appendChild(s)})();void 0";
+    document.querySelectorAll('.copy-loader').forEach(function (btn) {
+      btn.disabled = false;
+      btn.onclick = function () {
+        copyText(loader, Array.prototype.slice.call(document.querySelectorAll('.loader-status')), 'Copied! Now do step 2.');
+      };
+    });
+
     fetch('glow.js', { cache: 'no-cache' })
       .then(function (r) { if (!r.ok) throw new Error(r.status); return r.text(); })
       .then(function (code) {
@@ -87,15 +189,12 @@
         var copy = document.getElementById('copy');
         copy.disabled = false;
         copy.onclick = function () {
-          navigator.clipboard.writeText(code).then(function () {
-            document.getElementById('status').textContent = 'Copied! Now paste it in the Skyward console.';
-          }, function () {
-            document.getElementById('status').textContent = 'Copy failed. Open glow.js and copy it by hand.';
-          });
+          copyText(code, [document.getElementById('status')], 'Copied! Now paste it in the Skyward console.');
         };
       })
       .catch(function () {
         document.getElementById('status').textContent = 'Could not load glow.js.';
+        document.getElementById('ver').textContent = '';
       });
   </script>
 </body>

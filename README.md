@@ -28,6 +28,33 @@ published `glow.js` on GitHub, so it can tell you when an update is out.
 | `test/server.js` | A pretend Skyward server for local testing. |
 | `test/e2e.js` | Automated test of every screen, in a real browser. |
 
+## Phones (iPhone and Android)
+
+Open the install page on your phone. It shows step-by-step instructions for
+your phone and a **Copy the bookmark code** button. The phone bookmark is a
+short loader that pulls the newest `glow.js` from GitHub Pages each time, so
+it never needs updating.
+
+- **iPhone/iPad (Safari):** bookmark any page, edit the bookmark, and paste the
+  code as its address. On Skyward, open Bookmarks and tap it.
+- **Android (Chrome):** bookmark any page, edit it, and paste the code as its
+  URL. On Skyward, type the bookmark's name in the address bar and tap the
+  starred result.
+
+Use the Skyward website in the browser, not the Skyward app. If Skyward shows
+its phone layout, switch to the desktop site.
+
+## Schedule, SWARM and lunch
+
+- **Mon/Wed/Fri** use the class times Skyward lists. Lunch is the gap between
+  two classes, and the lunch letter comes from the period (for example, `4B`
+  means B lunch).
+- **Tue/Thu** are SWARM days. SWARM is the **Period 8** class in Skyward. The
+  times come from your saved times (**Schedule → Edit times**), then the
+  official times in `OFFICIAL_SWARM` in `glow.js` (one list per lunch letter),
+  then an estimate marked "estimated".
+- Quarter dates for the countdown are in `QUARTERS` in `glow.js`.
+
 ## How to use it
 
 1. Log in to Skyward and open **Gradebook**.

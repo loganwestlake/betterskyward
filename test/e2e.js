@@ -8,7 +8,7 @@
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-const { chromium } = require('playwright');
+const { chromium, devices } = require('playwright');
 
 const PORT = 8790;
 const BASE = 'http://localhost:' + PORT + '/test/mock-gradebook.html';
@@ -56,7 +56,8 @@ async function waitFor(fn, ms = 15000) {
 
   try {
     console.log('Normal Skyward (menu clicks work)');
-    let { page, errors, q, click } = await openApp(browser, BASE);
+    // A Monday morning, so the regular (non-SWARM) schedule applies.
+    let { page, errors, q, click } = await openApp(browser, BASE, undefined, new Date('2026-10-19T09:00:00-04:00'), 'America/New_York');
     check('shows version ' + VERSION, (await q('.side .ver'))[0] === 'v' + VERSION, await q('.side .ver'));
     check('update banner for newer version', (await q('.update'))[0]?.includes('99.0.0'), await q('.update'));
     check('opens on Q2, not FIN', (await q('.hero .sub'))[0]?.includes('Q2'), await q('.hero .sub'));
@@ -72,9 +73,9 @@ async function waitFor(fn, ms = 15000) {
     const tabs = await q('.tab');
     check('grades tabs in Skyward order with Q3 and Q4', JSON.stringify(tabs) === JSON.stringify(['Q1', 'Q2', 'SM1', 'Q3', 'Q4', 'FIN']), tabs);
     const cards = await q('.card h2');
-    check('7 class cards', cards.length === 7, cards);
-    check('teachers read', (await q('.card .teacher')).length === 7);
-    check('sorted by period', cards[0] === 'English 1' && cards[6] === 'Geometry', cards);
+    check('8 class cards (7 classes + SWARM)', cards.length === 8, cards);
+    check('teachers read', (await q('.card .teacher')).length === 8);
+    check('sorted by period', cards[0] === 'English 1' && cards[6] === 'Geometry' && cards[7] === 'Swarm', cards);
 
     await click('.card', 2);
     await waitFor(async () => (await q('.asg')).length > 0, 8000);
@@ -87,7 +88,9 @@ async function waitFor(fn, ms = 15000) {
     await page.keyboard.press('Escape');
 
     await click('.side [data-view=schedule]');
-    check('7 timeline slots', (await q('.slot')).length === 7);
+    const monday = await q('.slot .slot-card b');
+    check('Monday: 7 classes plus lunch, no SWARM', monday.length === 8 && monday.includes('Lunch B') && !monday.includes('SWARM'), monday);
+    check('Monday lunch fills the gap before 4B', (await q('.slot-lunch .slot-time'))[0] === '10:04 AM10:38 AM', await q('.slot-lunch .slot-time'));
     check('Skyward schedule page loaded (redirect catch)', await waitFor(async () => (await q('.table-card')).length > 0), await q('.view'));
 
     await click('.side [data-view=attendance]');
@@ -177,12 +180,130 @@ async function waitFor(fn, ms = 15000) {
     await click('.glance .seg-btn[data-term="Q3"]');
     check('Q3 shows when it starts', (await q('.qclock.future .qclock-label'))[0] === 'Q3 starts in', await q('.glance'));
     await page.clock.runFor(4 * 60 * 1000);
-    check('class change re-renders the card', (await q('.now h3'))[0] === 'Today' && (await q('.now-big'))[0] === 'Biology 1', await q('.now'));
-    check('next class counts down to its bell', /^starts in 33:\d\d$/.test((await q('.now-live'))[0] || ''), await q('.now-live'));
+    check('class change re-renders the card into lunch', (await q('.now h3'))[0] === 'Right now' && (await q('.now-big'))[0] === 'Lunch B', await q('.now'));
+    check('lunch counts down', /^33:\d\d left$/.test((await q('.now-live'))[0] || ''), await q('.now-live'));
     await page.clock.runFor(34 * 60 * 1000);
     check('card flips to "Right now" when the bell rings', (await q('.now h3'))[0] === 'Right now' && (await q('.now-big'))[0] === 'Biology 1', await q('.now'));
     check('no script errors', errors.length === 0, errors);
     await page.close();
+
+    console.log('SWARM day (Tue Oct 20, 2026, 9:00 AM Eastern)');
+    ({ page, errors, q, click } = await openApp(browser, BASE, undefined, new Date('2026-10-20T09:00:00-04:00'), 'America/New_York'));
+    await page.evaluate(() => localStorage.removeItem('skywardGlow:bells'));
+    await click('.side [data-view=schedule]');
+    check('Tue/Thu tab picked on a Tuesday', (await q('.sched-bar .seg-btn.on'))[0] === 'Tue · Thu · SWARM', await q('.sched-bar'));
+    const tue = await q('.slot .slot-card b');
+    check('SWARM day has 7 classes, SWARM and lunch', tue.length === 9 && tue.includes('SWARM') && tue.includes('Lunch B'), tue);
+    check('SWARM shows the Period 8 teacher', (await q('.slot-swarm .slot-card small'))[0] === 'Daniel Reyes', await q('.slot-swarm'));
+    check('estimated times are labeled', (await q('.sched-note.warn')).length === 1);
+    const times = await page.evaluate(() => [...document.getElementById('skyward-glow-host').shadowRoot.querySelectorAll('.slot-time')]
+      .map((e) => [e.querySelector('b').textContent, e.querySelector('small').textContent]));
+    check('SWARM day keeps the first and last bell', times[0][0] === '7:19 AM' && times[times.length - 1][1] === '2:10 PM', times);
+    const toMin = (t) => { const [h, m] = t.split(/[: ]/); return (parseInt(h, 10) % 12 + (/PM/.test(t) ? 12 : 0)) * 60 + parseInt(m, 10); };
+    check('SWARM day slots never overlap', times.every((t, i) => toMin(t[0]) < toMin(t[1]) && (i === 0 || toMin(times[i - 1][1]) <= toMin(t[0]))), times);
+    await click('.side [data-view=home]');
+    check('home card follows the SWARM-day times', (await q('.now-big'))[0] === 'SWARM', await q('.now'));
+    await click('.side [data-view=schedule]');
+
+    // Enter real times in the editor.
+    await click('[data-act="edit-times"]');
+    const rowNames = await q('.edit-name');
+    const swarmRow = rowNames.indexOf('SWARM (Period 8)');
+    check('editor lists every slot', rowNames.length === 9 && swarmRow > -1, rowNames);
+    const inputs = (edge) => page.locator('#skyward-glow-host .t-in[data-edge="' + edge + '"]');
+    await inputs('end').nth(swarmRow).fill('08:00');
+    await inputs('start').nth(swarmRow).fill('09:00');
+    await click('[data-act="save-times"]');
+    check('backwards times are refused', (await q('.editor .sched-note.warn'))[0]?.includes('start time before'), await q('.editor'));
+    // Moving SWARM after period 3's estimated start creates an overlap, which is refused.
+    await inputs('start').nth(swarmRow).fill('09:20'); await inputs('end').nth(swarmRow).fill('09:50');
+    await click('[data-act="save-times"]');
+    check('overlapping times are refused', (await q('.editor .sched-note.warn'))[0]?.includes('overlap'), await q('.editor .sched-note.warn'));
+    // The arrows reorder rows.
+    const beforeMove = await q('.edit-name');
+    await click('[data-move="' + swarmRow + '"][data-dir="-1"]');
+    const afterMove = await q('.edit-name');
+    check('arrow moves SWARM up one row', afterMove[swarmRow - 1] === 'SWARM (Period 8)' && afterMove[swarmRow] === beforeMove[swarmRow - 1], afterMove);
+    check('typed times survive a move', (await inputs('start').nth(swarmRow - 1).inputValue()) === '09:20');
+    await click('[data-act="cancel-times"]');
+    await click('[data-act="edit-times"]');
+    await click('[data-act="reset-times"]');
+    check('reset brings back the estimate', (await q('.edit-name')).length === 9);
+    await click('[data-act="cancel-times"]');
+
+    // A full valid day saves and survives running the bookmark again.
+    await page.evaluate(() => localStorage.setItem('skywardGlow:bells', JSON.stringify({ swarm: [
+      { kind: 'class', period: '1', start: 439, end: 485 }, { kind: 'class', period: '2', start: 489, end: 535 },
+      { kind: 'swarm', period: '8', start: 539, end: 569 }, { kind: 'class', period: '3', start: 573, end: 619 },
+      { kind: 'lunch', start: 619, end: 653 }, { kind: 'class', period: '4', start: 653, end: 699 },
+      { kind: 'class', period: '5', start: 703, end: 749 }, { kind: 'class', period: '6', start: 753, end: 799 },
+      { kind: 'class', period: '7', start: 803, end: 850 }] })));
+    await page.evaluate(CODE); await page.evaluate(CODE); await page.waitForTimeout(600);
+    await click('.side [data-view=schedule]');
+    check('saved times are used', (await q('.sched-note'))[0] === 'Using the times you entered.', await q('.sched-note'));
+    check('saved SWARM time shown', (await q('.slot-swarm .slot-time'))[0] === '8:59 AM9:29 AM', await q('.slot-swarm .slot-time'));
+    check('right now is SWARM at 9:00 Tuesday', await (async () => { await click('.side [data-view=home]'); return (await q('.now-big'))[0] === 'SWARM'; })(), await q('.now'));
+    await click('.side [data-view=schedule]');
+    await page.locator('#skyward-glow-host .lunch-select').selectOption('C');
+    check('changing lunch relabels it', (await q('.slot .slot-card b')).includes('Lunch C'));
+    await click('.sched-bar [data-sched="regular"]');
+    check('can still view the Mon/Wed/Fri schedule', !(await q('.slot .slot-card b')).includes('SWARM'));
+    check('no script errors', errors.length === 0, errors);
+    await page.evaluate(() => localStorage.removeItem('skywardGlow:bells'));
+    await page.close();
+
+    for (const [name, device] of [['iPhone', devices['iPhone 13']], ['Android', devices['Pixel 7']]]) {
+      console.log(name + ' (Skyward desktop page, no phone viewport)');
+      const ctx = await browser.newContext(Object.assign({}, device, { timezoneId: 'America/New_York' }));
+      const p3 = await ctx.newPage();
+      const errs = [];
+      p3.on('pageerror', (e) => errs.push(e.message));
+      await p3.route('https://loganwestlake.github.io/**', (r) => r.fulfill({ status: 200, body: "const VERSION = '0.0.1';" }));
+      // The phone bookmark: grab it from the install page and run it on Skyward.
+      await p3.goto('http://localhost:' + PORT + '/');
+      check('install page shows ' + name + ' steps', await p3.evaluate((n) =>
+        document.querySelector('[data-platform][aria-selected="true"]').dataset.platform === n, name === 'iPhone' ? 'ios' : 'android'));
+      const loader = await p3.evaluate(() => loader);
+      check('phone bookmark is short', loader.length < 500, loader.length);
+      await p3.goto(BASE);
+      const before = await p3.evaluate(() => window.innerWidth);
+      await p3.evaluate((code) => (0, eval)(code.replace(/^javascript:/, '')), loader);
+      await p3.waitForFunction(() => document.getElementById('skyward-glow-host'), null, { timeout: 10000 });
+      await p3.waitForTimeout(800);
+      const after = await p3.evaluate(() => window.innerWidth);
+      check('app fills the phone screen (' + before + 'px → ' + after + 'px)', after === device.viewport.width && before > after, { before, after });
+      const tab = p3.locator('#skyward-glow-host .tabbar [data-view=schedule]');
+      check('bottom tab bar shown', await tab.isVisible());
+      await tab.tap();
+      check('tapping a tab works', (await p3.evaluate(() => document.getElementById('skyward-glow-host').shadowRoot.querySelector('.page-head h1').textContent)) === 'Schedule');
+      const sizes = await p3.evaluate(() => {
+        const r = document.getElementById('skyward-glow-host').shadowRoot;
+        return { icon: r.querySelector('.mtop .icon-btn').getBoundingClientRect().height, wide: r.querySelector('.main').scrollWidth <= window.innerWidth };
+      });
+      check('tap targets at least 44px', sizes.icon >= 44, sizes);
+      check('no sideways scrolling', sizes.wide, sizes);
+      await p3.locator('#skyward-glow-host .mtop [data-act=close]').tap();
+      await p3.waitForTimeout(300);
+      const back = await p3.evaluate(() => ({ width: window.innerWidth, overflow: document.body.style.overflow }));
+      check('closing restores Skyward\'s own zoom', back.width === before && back.overflow === '', back);
+      // And opening it again still fills the screen.
+      await p3.evaluate((code) => (0, eval)(code.replace(/^javascript:/, '')), loader);
+      await p3.waitForFunction(() => document.getElementById('skyward-glow-host'), null, { timeout: 10000 });
+      await p3.waitForTimeout(500);
+      check('reopening fills the screen again', (await p3.evaluate(() => window.innerWidth)) === device.viewport.width);
+      check('no script errors', errs.length === 0, errs);
+      await ctx.close();
+    }
+
+    console.log('Install page on a computer');
+    {
+      const p4 = await browser.newPage();
+      await p4.goto('http://localhost:' + PORT + '/');
+      await p4.waitForFunction(() => document.getElementById('ver').textContent.startsWith('v'));
+      check('computer steps shown', await p4.evaluate(() => document.querySelector('[data-for="computer"]').hidden === false && document.querySelector('[data-for="ios"]').hidden));
+      check('install page shows ' + VERSION, (await p4.textContent('#ver')) === 'v' + VERSION);
+      await p4.close();
+    }
 
     console.log('Run again while starting up');
     {
