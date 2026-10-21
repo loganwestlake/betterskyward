@@ -111,7 +111,7 @@ async function waitFor(fn, ms = 15000) {
 
     await click('.side [data-view=more]');
     check('More lists menu pages', (await q('.tile')).length >= 4, await q('.tile'));
-    check('More shows version', (await q('.version-note'))[0] === 'Skyward Glow v' + VERSION);
+    check('More shows version', (await q('.version-note'))[0] === 'Better Skyward v' + VERSION);
     await click('.tile', 0);
     check('missing page shows a fallback', await waitFor(async () => (await q('.empty-state')).length > 0), await q('.view'));
     check('still on the gradebook (never navigated away)', page.url() === BASE, page.url());
@@ -331,7 +331,19 @@ async function waitFor(fn, ms = 15000) {
       check('install page shows ' + name + ' steps', await p3.evaluate((n) =>
         document.querySelector('[data-platform][aria-selected="true"]').dataset.platform === n, name === 'iPhone' ? 'ios' : 'android'));
       const loader = await p3.evaluate(() => loader);
-      check('phone bookmark is short', loader.length < 500, loader.length);
+      check('phone bookmark is short', loader.length < 700, loader.length);
+      // Tapped from a page that isn't Skyward (like the start page), it opens Skyward's sign-in.
+      await p3.route('https://skyward.iscorp.com/**', (r) => r.fulfill({ status: 200, contentType: 'text/html', body: '<title>Skyward sign-in</title><input type="password">' }));
+      await p3.goto('http://127.0.0.1:' + PORT + '/test/pages/sfschedule001.html');
+      await Promise.all([p3.waitForURL(/skyward\.iscorp\.com\/p12eduhernandocofl\/web\/seplog01\.w\?nopopup=true/, { timeout: 10000 }),
+        p3.evaluate((code) => (0, eval)(code.replace(/^javascript:/, '')), loader)]);
+      check('off Skyward, the bookmark opens your sign-in page', true);
+      // Tapped on the sign-in page, it says to sign in first.
+      await p3.goto('http://localhost:' + PORT + '/test/seplog01.html');
+      await p3.evaluate((code) => (0, eval)(code.replace(/^javascript:/, '')), loader);
+      await p3.waitForSelector('#skyward-glow-host-toast', { timeout: 10000 });
+      check('on the sign-in page it says to sign in first', (await p3.textContent('#skyward-glow-host-toast')).includes('Sign in first') &&
+        !(await p3.evaluate(() => document.getElementById('skyward-glow-host'))));
       await p3.goto(BASE);
       const before = await p3.evaluate(() => window.innerWidth);
       await p3.evaluate((code) => (0, eval)(code.replace(/^javascript:/, '')), loader);
@@ -441,7 +453,13 @@ async function waitFor(fn, ms = 15000) {
         install: [...document.querySelectorAll('a[href="skyward-glow.user.js"]')].length,
         skyward: [...document.querySelectorAll('a')].filter((a) => a.href === 'https://skyward.iscorp.com/p12eduhernandocofl/web/seplog01.w?nopopup=true').length
       }));
-      check('install page links the userscript and your Skyward sign-in', links.install === 3 && links.skyward === 3, links);
+      check('install page needs no apps (no userscript steps)', links.install === 0, links);
+      check('install page links your Skyward sign-in', links.skyward >= 1, links);
+      check('brand is Better Skyward', (await p4.title()) === 'Better Skyward' && (await p4.textContent('h1')).startsWith('Better Skyward'));
+      // The computer bookmark: off Skyward it opens the sign-in page.
+      const drag = await p4.getAttribute('#bookmarklet', 'href');
+      check('computer bookmark is labeled Better Skyward', (await p4.textContent('#bookmarklet')).startsWith('✦ Better Skyward'));
+      check('computer bookmark sends you to Skyward when off Skyward', decodeURIComponent(drag).includes("location.href='https://skyward.iscorp.com/p12eduhernandocofl/web/seplog01.w?nopopup=true'"));
       const served = await p4.request.get('http://localhost:' + PORT + '/skyward-glow.user.js');
       check('userscript file is served', served.ok() && (await served.text()).includes('==UserScript=='));
       await p4.close();

@@ -1,5 +1,5 @@
 /*
- * Skyward Glow — a better-looking Skyward Family Access.
+ * Better Skyward — a better-looking Skyward Family Access.
  *
  * How to use: log in to Skyward (the Gradebook page works best), then run
  * this script from a bookmark or paste it into the browser console
@@ -14,7 +14,7 @@
 
   // Bump on every change. The install page and the app both show it, and
   // the app compares it with the published copy to offer updates.
-  const VERSION = '2.3.1';
+  const VERSION = '2.4.0';
   const UPDATE_URL = 'https://loganwestlake.github.io/betterskyward/glow.js';
   const INSTALL_URL = 'https://loganwestlake.github.io/betterskyward/';
 
@@ -81,6 +81,28 @@
 
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const ICON = ICONS();
+
+  // On the sign-in page there's nothing to show yet.
+  if (isSignInPage()) { signInToast(); return; }
+
+  function isSignInPage() {
+    const pw = document.querySelector('input[type="password"]');
+    return !!pw && isVisible(pw) && !document.querySelector('#sf_navMenu, a[data-nav], a[id="showGradeInfo"], a[data-lit]');
+  }
+
+  function signInToast() {
+    const old = document.getElementById(HOST_ID + '-toast');
+    if (old) old.remove();
+    const t = document.createElement('div');
+    t.id = HOST_ID + '-toast';
+    t.setAttribute('role', 'status');
+    t.textContent = '✦ Sign in first, then run Better Skyward again.';
+    t.style.cssText = 'position:fixed;left:50%;top:calc(16px + env(safe-area-inset-top));transform:translateX(-50%);z-index:2147483647;' +
+      'max-width:calc(100% - 32px);padding:12px 18px;border-radius:14px;font:600 15px -apple-system,system-ui,sans-serif;color:#0A0A0A;' +
+      'background:linear-gradient(135deg,#F59E0B,#EA580C);box-shadow:0 10px 30px rgba(234,88,12,.45);text-align:center;';
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 5000);
+  }
 
   // ============================================================ gradebook
 
@@ -1046,7 +1068,7 @@
     app.innerHTML =
       '<div class="ambient"></div>' +
       '<aside class="side">' +
-        '<div class="brand"><span class="flame">' + ICON.flame + '</span><span>Skyward <em>Glow</em></span><span class="ver">v' + VERSION + '</span></div>' +
+        '<div class="brand"><span class="flame">' + ICON.flame + '</span><span>Better <em>Skyward</em></span><span class="ver">v' + VERSION + '</span></div>' +
         '<nav class="nav">' + VIEWS.map(navButton).join('') + '</nav>' +
         '<div class="side-foot">' +
           (student ? '<div class="who"><span class="avatar">' + esc(student.charAt(0)) + '</span><span><b>' + esc(student) + '</b><small>Family Access</small></span></div>' : '') +
@@ -1058,7 +1080,7 @@
           '<button class="btn ghost wide" data-act="close" title="Back to plain Skyward (Esc)">' + ICON.exit + ' Original Skyward</button>' +
         '</div>' +
       '</aside>' +
-      '<header class="mtop"><div class="brand"><span class="flame">' + ICON.flame + '</span><span>Skyward <em>Glow</em></span><span class="ver">v' + VERSION + '</span></div>' +
+      '<header class="mtop"><div class="brand"><span class="flame">' + ICON.flame + '</span><span>Better <em>Skyward</em></span><span class="ver">v' + VERSION + '</span></div>' +
         '<div class="mtop-actions">' + iconButton('theme', state.theme === 'dark' ? 'sun' : 'moon', 'Light / dark') +
         iconButton('report', 'flag', 'Report a problem') + iconButton('close', 'exit', 'Original Skyward') + '</div></header>' +
       '<main class="main">' + updateBanner() + '<div class="view">' + renderView() + '</div></main>' +
@@ -1147,7 +1169,7 @@
         '<div class="panel"><div class="panel-head"><h3>What changed</h3>' +
           (previous ? '<small>since ' + esc(new Date(previous.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })) + '</small>' : '') + '</div>' +
           (changes.length ? '<ul class="rows">' + changes.map(changeRow).join('') + '</ul>'
-            : '<p class="empty">' + (previous ? 'No grade changes since your last visit.' : 'Changes will show up here next time you open Glow.') + '</p>') +
+            : '<p class="empty">' + (previous ? 'No grade changes since your last visit.' : 'Changes will show up here next time you open Better Skyward.') + '</p>') +
         '</div>' +
         (data.courses.length ? glancePanel(graded) : '') +
       '</section>';
@@ -1269,7 +1291,7 @@
   function gradesView() {
     if (!data.courses.length) {
       return header('Grades', '') + '<div class="panel empty-state"><h3>No grades found</h3>' +
-        '<p>Open <b>Gradebook</b> in Skyward, wait for it to load, then run Skyward Glow again.</p>' +
+        '<p>Open <b>Gradebook</b> in Skyward, wait for it to load, then run Better Skyward again.</p>' +
         '<p>Already on the Gradebook and still seeing this? Click the flag button and send the report.</p></div>';
     }
     const s = termStats(data.courses, state.term);
@@ -1362,7 +1384,7 @@
     const a = state.assignments[c.key + '|' + term];
     let body;
     if (!g) body = '<p class="empty">No grade posted for ' + esc(term) + ' yet.</p>';
-    else if (!c.links[term] || !data.live) body = '<p class="empty">Assignment details are only available when Glow is started on the Gradebook page.</p>';
+    else if (!c.links[term] || !data.live) body = '<p class="empty">Assignment details are only available when Better Skyward is started on the Gradebook page.</p>';
     else if (!a || a.status === 'loading') body = '<div class="loading"><span class="spinner"></span>Loading assignments from Skyward…</div>';
     else if (a.status === 'ok') body = assignmentsHtml(a.result);
     else body = '<p class="empty">Couldn\'t read the assignment list here.</p>';
@@ -1593,7 +1615,7 @@
 
   function moreView() {
     let html = header('More', 'Everything else in your Skyward menu, redesigned.');
-    const foot = '<p class="version-note">Skyward Glow v' + VERSION + '</p>';
+    const foot = '<p class="version-note">Better Skyward v' + VERSION + '</p>';
     if (!moreNav.length) return html + '<p class="empty">Couldn\'t find Skyward\'s menu on this page.</p>' + foot;
     return html + '<section class="tiles">' + moreNav.map((n) =>
       '<button class="tile" data-page="' + esc(n.label) + '"><span class="tile-icon">' + ICON[iconFor(n.label)] + '</span><b>' + esc(n.label) + '</b>' + ICON.arrow + '</button>').join('') +
@@ -1854,7 +1876,7 @@
     removeBackPill();
     const pill = document.createElement('button');
     pill.id = HOST_ID + '-back';
-    pill.textContent = '✦ Back to Glow';
+    pill.textContent = '✦ Back to Better Skyward';
     pill.style.cssText = 'position:fixed;right:20px;bottom:calc(20px + env(safe-area-inset-bottom));z-index:2147483647;padding:12px 18px;border:0;border-radius:999px;' +
       'font:600 14px Inter,system-ui,sans-serif;color:#0A0A0A;background:linear-gradient(135deg,#F59E0B,#EA580C);' +
       'box-shadow:0 10px 30px rgba(234,88,12,.45);cursor:pointer;';
@@ -1960,7 +1982,7 @@
         (f.getAttribute('action') || '').split('?')[0] + ' (' + f.elements.length + ' fields)').join(', '),
       'First menu link: ' + (nav[0] ? nav[0].el.outerHTML.replace(/\s+/g, ' ').slice(0, 400) : '-')
     ].join('\n');
-    const text = 'Skyward Glow report\n' + diag + '\nView: ' + state.view + '\nTerms: ' + data.terms.join(', ') + '\nPicked: ' + state.term +
+    const text = 'Better Skyward report\n' + diag + '\nView: ' + state.view + '\nTerms: ' + data.terms.join(', ') + '\nPicked: ' + state.term +
       '\nMenu: ' + nav.map((n) => n.label).join(', ') + '\n' +
       data.courses.map((c) => c.name + ' | period ' + c.period + ' | ' + c.teacher + ' | ' +
         data.terms.map((t) => t + '=' + (c.grades[t] ? c.grades[t].raw : '-')).join(' ')).join('\n') +
@@ -1969,7 +1991,7 @@
     const panel = document.createElement('div');
     panel.className = 'report';
     panel.innerHTML = '<div class="report-box"><h2>Report a problem</h2>' +
-      '<p>This is what Skyward Glow read from this page. Copy it and send it to whoever is fixing the script.</p>' +
+      '<p>This is what Better Skyward read from this page. Copy it and send it to whoever is fixing the script.</p>' +
       '<textarea readonly></textarea><div class="report-actions"><button class="btn" data-r="copy">Copy</button>' +
       '<button class="btn ghost" data-r="close">Close</button></div></div>';
     const box = panel.querySelector('textarea');

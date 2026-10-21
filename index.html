@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>Skyward Glow</title>
+  <title>Better Skyward</title>
   <meta name="description" content="A redesigned Skyward Family Access: grades, assignments, schedule, attendance and more. Runs in your browser on your own Skyward page.">
   <meta name="color-scheme" content="dark">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -45,7 +45,7 @@
 </head>
 <body>
   <main>
-    <h1>Skyward <em>Glow</em> <span class="ver" id="ver">loading…</span></h1>
+    <h1>Better <em>Skyward</em> <span class="ver" id="ver">loading…</span></h1>
     <p class="lede">A redesigned Skyward. A home screen with what's happening now, grades with every assignment, your schedule as a timeline, attendance, and the rest of Skyward's menu, all in one app. It reads the Skyward you're already logged in to. Your grades only ever go between your browser and Skyward.</p>
 
     <nav class="platforms" role="tablist" aria-label="Your device">
@@ -54,103 +54,68 @@
       <button role="tab" data-platform="computer">Computer</button>
     </nav>
 
-    <!-- iPhone / iPad: Safari runs bookmarks that start with "javascript:". -->
+    <!-- Phones: one bookmark. Tapped anywhere else it opens Skyward's sign-in;
+         tapped on Skyward after signing in, it runs Better Skyward. -->
     <div class="platform" data-for="ios">
       <section class="step recommended">
-        <span class="tag">iPhone · iPad · Recommended</span>
-        <h2>Opens by itself after you sign in</h2>
-        <p>A free Safari add-on runs Skyward Glow for you: open Skyward, sign in, and it takes you to your grades in Glow.</p>
+        <span class="tag">iPhone · iPad · Safari · no apps</span>
+        <h2>1. Make the Better Skyward bookmark (once)</h2>
         <ol>
-          <li>Install <strong>Userscripts</strong> (free) from the App Store, open it once, and tap <strong>Set Userscripts Directory</strong> → <strong>Open</strong>.</li>
-          <li>Open <strong>Settings</strong> → <strong>Apps</strong> → <strong>Safari</strong> → <strong>Extensions</strong> → <strong>Userscripts</strong>. Turn it on and set <strong>All Websites</strong> to <strong>Allow</strong>. (If Safari later asks about Userscripts, tap <strong>Always Allow on Every Website</strong>.) It only runs scripts you install, and this one only runs on Skyward.</li>
-          <li>In Safari, tap <a href="skyward-glow.user.js"><strong>Install Skyward Glow</strong></a>. Tap <strong>aA</strong> (or the puzzle piece) in the address bar → <strong>Userscripts</strong> → <strong>Install</strong>.</li>
-          <li>Tap <a class="btn inline" href="https://skyward.iscorp.com/p12eduhernandocofl/web/seplog01.w?nopopup=true">Open my Skyward</a> and sign in. Glow opens on your grades.</li>
-          <li>Bookmark that sign-in page (<strong>Share</strong> → <strong>Add to Favorites</strong>) so it's one tap from your start page.</li>
-        </ol>
-        <p class="note">Closed Glow? Tap the orange <strong>✦ Glow</strong> button at the bottom of any Skyward page to bring it back.</p>
-      </section>
-      <section class="step">
-        <span class="tag">Other way · bookmark</span>
-        <h2>Set up the bookmark (once)</h2>
-        <ol>
-          <li>Tap <strong>Copy the bookmark code</strong>:<br>
-            <button class="btn copy-loader" disabled>Copy the bookmark code</button> <span class="status loader-status"></span></li>
-          <li>Tap the <strong>Share</strong> button <span class="glyph">⬆︎</span>, then <strong>Add Bookmark</strong>. Name it <strong>Skyward Glow</strong> and tap <strong>Save</strong>.</li>
-          <li>Tap the <strong>Bookmarks</strong> button <span class="glyph">📖</span>, then <strong>Edit</strong>, and tap <strong>Skyward Glow</strong>.</li>
+          <li><button class="btn copy-loader" disabled>Copy the bookmark code</button> <span class="status loader-status"></span></li>
+          <li>Tap <strong>Share</strong> <span class="glyph">⬆︎</span> → <strong>Add to Favorites</strong>. Name it <strong>Better Skyward</strong> → <strong>Save</strong>.</li>
+          <li>Open your bookmarks: tap the <span class="glyph">📖</span> button (on newer iPhones, <strong>⋯</strong> → <strong>Bookmarks</strong>), open <strong>Favorites</strong>, tap <strong>Edit</strong>, then tap <strong>Better Skyward</strong>.</li>
           <li>Tap the address under the name, delete it all, <strong>paste</strong>, then tap <strong>Done</strong>.</li>
         </ol>
-        <h2>Use it</h2>
+        <h2>2. Every time</h2>
         <ol>
-          <li>Open Skyward in <strong>Safari</strong> (the website, not the Skyward app), log in, and go to <strong>Gradebook</strong>.</li>
-          <li>Tap the <strong>Bookmarks</strong> button <span class="glyph">📖</span> and tap <strong>Skyward Glow</strong>.</li>
+          <li>Tap <strong>Better Skyward</strong> on your start page. It opens the Skyward sign-in page.</li>
+          <li>Sign in.</li>
+          <li>Tap the <strong>address bar</strong>, type <strong>Better</strong>, and tap <strong>☆ Better Skyward</strong> under <strong>Favorites</strong> or <strong>Bookmarks</strong>. Better Skyward opens over Skyward.</li>
         </ol>
-        <p class="note">If Skyward shows its phone layout instead of the full site, tap <strong>aA</strong> in the address bar → <strong>Request Desktop Website</strong>, then open Gradebook again.</p>
+        <p class="note">Tapping it from the address bar is what makes it run on the Skyward page you're on. If tapping it on your start page doesn't open Skyward, use <a class="btn inline" href="https://skyward.iscorp.com/p12eduhernandocofl/web/seplog01.w?nopopup=true">Open Skyward</a> and add that page to your Favorites too.</p>
       </section>
     </div>
 
-    <!-- Android: Chrome runs a "javascript:" bookmark when you pick it from the address bar. -->
     <div class="platform" data-for="android">
       <section class="step recommended">
-        <span class="tag">Android · Recommended</span>
-        <h2>Opens by itself after you sign in</h2>
-        <p>Chrome on Android can't run add-ons, so this uses <strong>Firefox</strong>: open Skyward, sign in, and it takes you to your grades in Glow.</p>
+        <span class="tag">Android · Chrome · no apps</span>
+        <h2>1. Make the Better Skyward bookmark (once)</h2>
         <ol>
-          <li>Install <strong>Firefox</strong> from the Play Store and open this page in it.</li>
-          <li>In Firefox, tap <strong>⋮</strong> → <strong>Add-ons</strong> → find <strong>Tampermonkey</strong> → <strong>+</strong> → <strong>Add</strong>.</li>
-          <li>Tap <a href="skyward-glow.user.js"><strong>Install Skyward Glow</strong></a>, then <strong>Install</strong> on the Tampermonkey screen.</li>
-          <li>Tap <a class="btn inline" href="https://skyward.iscorp.com/p12eduhernandocofl/web/seplog01.w?nopopup=true">Open my Skyward</a> and sign in. Glow opens on your grades.</li>
-          <li>Bookmark that sign-in page (<strong>⋮</strong> → <strong>☆</strong>) or add it to your home screen.</li>
+          <li><button class="btn copy-loader" disabled>Copy the bookmark code</button> <span class="status loader-status"></span></li>
+          <li>Tap <strong>⋮</strong> → <strong>☆</strong> to bookmark this page.</li>
+          <li>Tap <strong>⋮</strong> → <strong>Bookmarks</strong> → <strong>⋮</strong> next to it → <strong>Edit</strong>. Name it <strong>Better Skyward</strong>, clear the URL, <strong>paste</strong>, and go back.</li>
         </ol>
-        <p class="note">Closed Glow? Tap the orange <strong>✦ Glow</strong> button at the bottom of any Skyward page to bring it back.</p>
-      </section>
-      <section class="step">
-        <span class="tag">Other way · Chrome bookmark</span>
-        <h2>Set up the bookmark (once)</h2>
+        <h2>2. Every time</h2>
         <ol>
-          <li>Tap <strong>Copy the bookmark code</strong>:<br>
-            <button class="btn copy-loader" disabled>Copy the bookmark code</button> <span class="status loader-status"></span></li>
-          <li>Tap <strong>⋮</strong> (top right), then the <strong>☆ star</strong> to bookmark this page.</li>
-          <li>Tap <strong>⋮</strong> → <strong>Bookmarks</strong>, then <strong>⋮</strong> next to the new bookmark → <strong>Edit</strong>.</li>
-          <li>Change the name to <strong>Skyward Glow</strong>. Clear the URL, <strong>paste</strong>, and tap back to save.</li>
+          <li>Tap the address bar, type <strong>Better</strong>, and tap <strong>☆ Better Skyward</strong>. It opens the Skyward sign-in page.</li>
+          <li>Sign in.</li>
+          <li>Tap the address bar again, type <strong>Better</strong>, and tap <strong>☆ Better Skyward</strong>. Better Skyward opens over Skyward.</li>
         </ol>
-        <h2>Use it</h2>
-        <ol>
-          <li>Open Skyward in <strong>Chrome</strong> (the website, not the Skyward app), log in, and go to <strong>Gradebook</strong>.</li>
-          <li>Tap the address bar, type <strong>Skyward Glow</strong>, and tap the result with the <strong>☆ star</strong>. Picking it from the Bookmarks menu won't work; Chrome only runs it from the address bar.</li>
-        </ol>
-        <p class="note">If Skyward shows its phone layout, tap <strong>⋮</strong> → <strong>Desktop site</strong>, then open Gradebook again.</p>
+        <p class="note">Chrome only runs it when you pick it from the address bar, not from the Bookmarks list.</p>
       </section>
     </div>
 
     <div class="platform" data-for="computer">
       <section class="step recommended">
-        <span class="tag">Recommended · opens by itself</span>
-        <h2>Opens by itself after you sign in</h2>
-        <ol>
-          <li>Add <strong>Tampermonkey</strong> to Chrome, Edge or Firefox from the browser's extension store.</li>
-          <li>Click <a href="skyward-glow.user.js"><strong>Install Skyward Glow</strong></a>, then <strong>Install</strong> on the Tampermonkey screen.</li>
-          <li>Click <a class="btn inline" href="https://skyward.iscorp.com/p12eduhernandocofl/web/seplog01.w?nopopup=true">Open my Skyward</a> and sign in. Glow opens on your grades.</li>
-        </ol>
-      </section>
-      <section class="step">
-        <span class="tag">Option A · bookmark</span>
-        <h2>Save it as a bookmark</h2>
+        <span class="tag">Computer · no installs</span>
+        <h2>1. Save the bookmark (once)</h2>
         <ol>
           <li>Show your bookmarks bar (<kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>B</kbd>).</li>
-          <li>Drag this button onto the bar:</li>
+          <li>Drag this button onto the bar: <a class="btn" id="bookmarklet" href="#" aria-disabled="true" onclick="return false">✦ Better Skyward</a></li>
         </ol>
-        <a class="btn" id="bookmarklet" href="#" aria-disabled="true" onclick="return false">✦ Skyward Glow</a>
-        <p class="note" style="margin-top:10px">Updating? Delete your old bookmark first, then drag this one. The app tells you when a new version is out.</p>
-        <ol start="3">
-          <li>Log in to Skyward, open <strong>Gradebook</strong>, then click the bookmark.</li>
+        <h2>2. Every time</h2>
+        <ol>
+          <li>Click <strong>✦ Better Skyward</strong>. It opens the Skyward sign-in page.</li>
+          <li>Sign in, then click <strong>✦ Better Skyward</strong> again.</li>
         </ol>
+        <p class="note">Updating? Delete the old bookmark and drag the new one. The app tells you when a new version is out.</p>
       </section>
 
       <section class="step">
-        <span class="tag">Option B</span>
+        <span class="tag">Other way</span>
         <h2>Paste it into the console</h2>
         <ol>
-          <li>Open Skyward → <strong>Gradebook</strong>.</li>
+          <li>Sign in to Skyward.</li>
           <li>Press <kbd>F12</kbd> (or <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>J</kbd>) and open the <strong>Console</strong> tab.</li>
           <li>Paste the code and press <kbd>Enter</kbd>. Chrome may ask you to type <kbd>allow pasting</kbd> first.</li>
         </ol>
@@ -161,13 +126,13 @@
     <section class="step">
       <span class="tag">Try it first</span>
       <h2>Practice on a fake gradebook</h2>
-      <p>Open the practice page, which has made-up grades, and run Skyward Glow there before trying it on real Skyward.</p>
+      <p>Open the practice page, which has made-up grades, and run Better Skyward there before trying it on real Skyward.</p>
       <a class="btn ghost" href="test/mock-gradebook.html">Open the practice page</a>
     </section>
 
     <textarea id="manual" class="manual" readonly hidden aria-label="Bookmark code"></textarea>
 
-    <p class="note">The phone bookmark always loads the newest version, so you never have to update it. Tap <strong>Original Skyward</strong> (or press <kbd>Esc</kbd>) to get plain Skyward back. Something look wrong? Tap the flag button in the app, copy the report, and send it over. School-managed devices may block bookmarks like this; a personal phone or computer works.</p>
+    <p class="note">The phone bookmark always loads the newest version, so you never have to update it. Your Skyward sign-in stays between you and Skyward; Better Skyward never sees your password. Tap <strong>Original Skyward</strong> (or press <kbd>Esc</kbd>) to get plain Skyward back. Something look wrong? Tap the flag button in the app, copy the report, and send it over. School-managed devices may block bookmarks like this; a personal phone or computer works.</p>
   </main>
 
   <script>
@@ -206,8 +171,12 @@
     // a file or a local preview uses the published copy, which Skyward can reach.
     var published = 'https://loganwestlake.github.io/betterskyward/glow.js';
     var glowUrl = location.protocol === 'https:' || location.hostname === 'localhost' ? new URL('glow.js', location.href).href : published;
-    var loader = "javascript:(function(){var s=document.createElement('script');s.src='" + glowUrl +
-      "?t='+Date.now();s.onerror=function(){alert('Skyward Glow could not load. Check your internet connection and try again.')};" +
+    // One bookmark for everything: on Skyward (or the local practice site)
+    // it runs the app; anywhere else it opens the Skyward sign-in page.
+    var signIn = 'https://skyward.iscorp.com/p12eduhernandocofl/web/seplog01.w?nopopup=true';
+    var loader = "javascript:(function(){var h=location.hostname;if(!/(^|\\.)skyward\\.iscorp\\.com$/.test(h)&&h!=='localhost'){location.href='" + signIn +
+      "';return}var s=document.createElement('script');s.src='" + glowUrl +
+      "?t='+Date.now();s.onerror=function(){alert('Better Skyward could not load. Check your internet connection and try again.')};" +
       "(document.head||document.documentElement).appendChild(s)})();void 0";
     document.querySelectorAll('.copy-loader').forEach(function (btn) {
       btn.disabled = false;
@@ -222,8 +191,8 @@
         var version = (code.match(/const VERSION = '([\d.]+)'/) || [])[1] || '?';
         document.getElementById('ver').textContent = 'v' + version;
         var link = document.getElementById('bookmarklet');
-        link.textContent = '✦ Skyward Glow ' + version;
-        link.href = 'javascript:' + encodeURIComponent(code);
+        link.textContent = '✦ Better Skyward ' + version;
+        link.href = 'javascript:' + encodeURIComponent('if(!/(^|\\.)skyward\\.iscorp\\.com$/.test(location.hostname)&&location.hostname!==\'localhost\'){location.href=\'' + signIn + '\'}else{' + code + '}');
         link.removeAttribute('aria-disabled');
         link.onclick = function () { alert('Drag this button to your bookmarks bar, then click it on your Skyward Gradebook page.'); return false; };
 

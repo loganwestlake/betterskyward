@@ -1,4 +1,4 @@
-# Better Skyward (Skyward Glow)
+# Better Skyward
 
 A redesigned Skyward Family Access that runs on top of the real one. It reads
 what Skyward already shows you and draws a new app over it:
@@ -23,41 +23,35 @@ published `glow.js` on GitHub, so it can tell you when an update is out.
 |---|---|
 | `glow.js` | The script itself. This is what runs on Skyward. |
 | `index.html` | The install page: setup steps for each device. |
-| `skyward-glow.user.js` | The userscript that opens Glow by itself after you sign in. |
+| `skyward-glow.user.js` | Optional userscript that opens Better Skyward after you sign in. |
 | `test/mock-gradebook.html` | A fake Skyward gradebook with made-up grades, for testing. |
 | `test/seplog01.html`, `test/sfhome01.html` | Practice sign-in and home pages for the userscript. |
 | `test/pages/` | Fake Attendance and Schedule pages the practice gradebook links to. |
 | `test/server.js` | A pretend Skyward server for local testing. |
 | `test/e2e.js` | Automated test of every screen, in a real browser. |
 
-## Opens by itself after you sign in (recommended)
+## How to use it (no apps)
 
-`skyward-glow.user.js` is a userscript. With a userscript extension
-installed, it runs on Skyward pages: after you sign in it opens the Gradebook
-and starts Glow. Close Glow and it stays closed for that visit; the orange
-**✦ Glow** button brings it back. It always loads the newest `glow.js`.
+One bookmark does everything. Make it from the install page
+(https://loganwestlake.github.io/betterskyward/), which shows the steps for
+iPhone, Android or a computer.
 
-- **iPhone/iPad:** the free **Userscripts** app (Safari extension).
-- **Android:** **Firefox** with **Tampermonkey** (Chrome on Android has no add-ons).
-- **Computer:** **Tampermonkey** in Chrome, Edge or Firefox.
+1. Tap **Better Skyward** from anywhere: it opens the Skyward sign-in page.
+2. Sign in.
+3. Run **Better Skyward** again on the Skyward page. On a phone, tap the
+   address bar, type **Better**, and tap the starred bookmark; that's what
+   makes it run on the page you're on.
 
-Sign-in link: https://skyward.iscorp.com/p12eduhernandocofl/web/seplog01.w?nopopup=true
+Run on the sign-in page, it just says to sign in first. The phone bookmark
+loads the newest `glow.js` every time.
 
-## Phones (iPhone and Android)
+Why not embed Skyward in a page with a button on top? Browsers don't let one
+site read or control another site shown inside it, and iPhone Safari blocks
+Skyward's sign-in inside another site's frame. The code has to run on
+Skyward's own page, which is what the bookmark does.
 
-Open the install page on your phone. It shows step-by-step instructions for
-your phone and a **Copy the bookmark code** button. The phone bookmark is a
-short loader that pulls the newest `glow.js` from GitHub Pages each time, so
-it never needs updating.
-
-- **iPhone/iPad (Safari):** bookmark any page, edit the bookmark, and paste the
-  code as its address. On Skyward, open Bookmarks and tap it.
-- **Android (Chrome):** bookmark any page, edit it, and paste the code as its
-  URL. On Skyward, type the bookmark's name in the address bar and tap the
-  starred result.
-
-Use the Skyward website in the browser, not the Skyward app. If Skyward shows
-its phone layout, switch to the desktop site.
+Optional: `skyward-glow.user.js` does the same automatically for people who
+already use a userscript extension (such as Tampermonkey on a computer).
 
 ## Schedule, SWARM and lunch
 
@@ -69,14 +63,6 @@ its phone layout, switch to the desktop site.
   official times in `OFFICIAL_SWARM` in `glow.js` (one list per lunch letter),
   then an estimate marked "estimated".
 - Quarter dates for the countdown are in `QUARTERS` in `glow.js`.
-
-## How to use it
-
-1. Log in to Skyward and open **Gradebook**.
-2. Either click your **✦ Skyward Glow** bookmark (set it up from the install
-   page), or press **F12**, open **Console**, paste all of `glow.js`, and press
-   **Enter**. Chrome may ask you to type `allow pasting` first.
-3. Press **Esc** or click **Original** to go back to normal Skyward.
 
 ## If something looks wrong
 

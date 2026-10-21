@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Skyward Glow
+// @name         Better Skyward
 // @namespace    https://loganwestlake.github.io/betterskyward/
-// @version      2.3.1
-// @description  Opens Skyward Glow by itself after you sign in to Skyward Family Access.
+// @version      2.4.0
+// @description  Opens Better Skyward by itself after you sign in to Skyward Family Access.
 // @match        https://skyward.iscorp.com/*
 // @noframes
 // @run-at       document-idle
@@ -18,8 +18,8 @@
  *
  *   sign-in page  → notes that you're signing in and shows a small hint
  *   first page after signing in → opens the Gradebook for you
- *   Gradebook     → starts Skyward Glow (unless you closed it this visit)
- *   any other page → shows a small "✦ Glow" button to open it
+ *   Gradebook     → starts Better Skyward (unless you closed it this visit)
+ *   any other page → shows a small "✦ Better Skyward" button to open it
  *
  * It always loads the newest glow.js, so it never needs updating.
  */
@@ -47,7 +47,7 @@
 
   if (isSignIn) {
     session.set(FLOW_KEY, 'signing-in');
-    hint('✦ Skyward Glow will open after you sign in');
+    hint('✦ Better Skyward will open after you sign in');
     return;
   }
 
@@ -81,7 +81,7 @@
     session.del(DISMISSED_KEY);
     const s = document.createElement('script');
     s.src = GLOW_URL + '?t=' + Date.now();
-    s.onerror = () => alert('Skyward Glow could not load. Check your internet connection, then tap ✦ Glow to try again.');
+    s.onerror = () => alert('Better Skyward could not load. Check your internet connection, then tap ✦ Better Skyward to try again.');
     document.documentElement.appendChild(s);
     pill();
   }
@@ -92,8 +92,8 @@
     const b = document.createElement('button');
     b.id = HOST_ID + '-open';
     b.type = 'button';
-    b.textContent = '✦ Glow';
-    b.setAttribute('aria-label', 'Open Skyward Glow');
+    b.textContent = '✦ Better Skyward';
+    b.setAttribute('aria-label', 'Open Better Skyward');
     b.style.cssText = 'position:fixed;right:16px;bottom:calc(16px + env(safe-area-inset-bottom));z-index:2147483645;' +
       'padding:12px 18px;border:0;border-radius:999px;font:600 15px -apple-system,system-ui,sans-serif;color:#0A0A0A;' +
       'background:linear-gradient(135deg,#F59E0B,#EA580C);box-shadow:0 8px 24px rgba(234,88,12,.45);cursor:pointer;';
