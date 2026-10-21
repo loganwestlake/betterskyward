@@ -14,7 +14,7 @@
 
   // Bump on every change. The install page and the app both show it, and
   // the app compares it with the published copy to offer updates.
-  const VERSION = '2.3.0';
+  const VERSION = '2.3.1';
   const UPDATE_URL = 'https://loganwestlake.github.io/betterskyward/glow.js';
   const INSTALL_URL = 'https://loganwestlake.github.io/betterskyward/';
 

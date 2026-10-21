@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Skyward Glow
 // @namespace    https://loganwestlake.github.io/betterskyward/
-// @version      2.3.0
+// @version      2.3.1
 // @description  Opens Skyward Glow by itself after you sign in to Skyward Family Access.
 // @match        https://skyward.iscorp.com/*
 // @noframes
@@ -27,7 +27,7 @@
   'use strict';
 
   const GLOW_URL = 'https://loganwestlake.github.io/betterskyward/glow.js';
-  const FLOW_KEY = 'skywardGlow:flow';           // 'signing-in' → 'to-gradebook'
+  const FLOW_KEY = 'skywardGlow:flow';           // 'signing-in' between sign-in and the next page
   const DISMISSED_KEY = 'skywardGlow:dismissed'; // set by glow.js when you close it
   const HOST_ID = 'skyward-glow-host';
 
@@ -38,7 +38,11 @@
   };
 
   const page = location.pathname.split('/').pop().toLowerCase();
-  const isSignIn = /^seplog/.test(page) || !!document.querySelector('input[type="password"]');
+  // Skyward's sign-in page is seplog01.w. Other pages can hold a password
+  // box (changing your password), so a password box only counts on a page
+  // without Skyward's menu.
+  const isSignIn = /^seplog/.test(page) ||
+    (!!document.querySelector('input[type="password"]') && !document.querySelector('#sf_navMenu, a[data-nav]'));
   const isGradebook = /gradebook/.test(page) || !!document.querySelector('a[id="showGradeInfo"], a[data-lit]');
 
   if (isSignIn) {
@@ -47,17 +51,19 @@
     return;
   }
 
-  // Just signed in: go to the Gradebook, where Glow can read everything.
-  if (session.get(FLOW_KEY) === 'signing-in' && !isGradebook) {
-    session.set(FLOW_KEY, 'to-gradebook');
-    session.del(DISMISSED_KEY);
-    const link = gradebookLink();
-    if (link) { link.click(); return; }
-    // No Gradebook link on this page: start here; Glow loads grades itself.
-    session.del(FLOW_KEY);
-    return launch();
-  }
+  // Just signed in: a fresh visit, so forget any earlier "closed". If this
+  // isn't the Gradebook, go there, where Glow can read everything.
+  const justSignedIn = session.get(FLOW_KEY) === 'signing-in';
   session.del(FLOW_KEY);
+  if (justSignedIn) {
+    session.del(DISMISSED_KEY);
+    if (!isGradebook) {
+      const link = gradebookLink();
+      if (link) { link.click(); return; }
+      // No Gradebook link on this page: start here; Glow loads grades itself.
+      return launch();
+    }
+  }
 
   if (isGradebook && session.get(DISMISSED_KEY) !== '1') launch();
   else pill();
@@ -75,17 +81,7 @@
     session.del(DISMISSED_KEY);
     const s = document.createElement('script');
     s.src = GLOW_URL + '?t=' + Date.now();
-    s.onerror = () => {
-      // Some pages block outside scripts; fetch the code and run it inline.
-      fetch(GLOW_URL, { cache: 'no-store' })
-        .then((r) => { if (!r.ok) throw new Error(r.status); return r.text(); })
-        .then((code) => {
-          const inline = document.createElement('script');
-          inline.textContent = code;
-          document.documentElement.appendChild(inline);
-        })
-        .catch(() => alert('Skyward Glow could not load. Check your internet connection, then tap ✦ Glow to try again.'));
-    };
+    s.onerror = () => alert('Skyward Glow could not load. Check your internet connection, then tap ✦ Glow to try again.');
     document.documentElement.appendChild(s);
     pill();
   }
@@ -109,8 +105,7 @@
       b.style.display = (host && host.style.display !== 'none') || back ? 'none' : '';
     };
     sync();
-    new MutationObserver(sync).observe(document.body, { childList: true, attributes: true, subtree: false, attributeFilter: ['style'] });
-    setInterval(sync, 1000); // Glow hides itself by style, which the observer above can miss
+    setInterval(sync, 1000); // Glow shows and hides itself by style; check once a second
   }
 
   function hint(text) {

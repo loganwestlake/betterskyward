@@ -410,6 +410,19 @@ async function waitFor(fn, ms = 15000) {
       // Visiting another Skyward page later doesn't redirect anywhere.
       await pg.goto('http://localhost:' + PORT + '/test/sfhome01.html');
       await pg.waitForTimeout(2000);
+      // A change-password box isn't the sign-in page.
+      await pg.goto('http://localhost:' + PORT + '/test/sfhome01.html?pw=1');
+      await pg.waitForTimeout(1500);
+      check('change-password box is not treated as sign-in', !(await pg.evaluate(() => document.getElementById('skyward-glow-host-hint'))) && await pillOn(pg));
+      // Closed earlier, timed out, signed in again, landed on the Gradebook: opens.
+      await pg.evaluate(() => sessionStorage.setItem('skywardGlow:dismissed', '1'));
+      await pg.goto('http://localhost:' + PORT + '/test/seplog01.html');
+      await pg.waitForSelector('#skyward-glow-host-hint');
+      await pg.goto(BASE);
+      await pg.waitForFunction(() => document.getElementById('skyward-glow-host'), null, { timeout: 10000 });
+      check('signing in again resets "closed"', await hostOn(pg));
+      await pg.goto('http://localhost:' + PORT + '/test/sfhome01.html');
+      await pg.waitForTimeout(2000);
       check('later visits to Home stay on Home', /sfhome01\.html/.test(pg.url()) && !(await hostOn(pg)) && await pillOn(pg), pg.url());
       check('no script errors', errs.length === 0, errs);
       await ctx.close();

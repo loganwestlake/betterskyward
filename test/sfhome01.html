@@ -7,6 +7,10 @@
 </ul>
 <h2 class="sf_heading">Home</h2><p>Messages and news would be here.</p>
 <script>
+// ?pw=1 adds a change-password form, like My Account, to check it isn't mistaken for sign-in.
+if (/pw=1/.test(location.search)) document.write('<form id="chpw"><input type="password" name="newpw"><button>Change password</button></form>');
+</script>
+<script>
 document.querySelector('[data-nav="sfgradebook001.w"]').addEventListener('click', function () { location.href = 'mock-gradebook.html'; });
 </script>
 </body></html>
