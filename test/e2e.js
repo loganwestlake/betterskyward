@@ -14,6 +14,7 @@ const PORT = 8790;
 const BASE = 'http://localhost:' + PORT + '/test/mock-gradebook.html';
 const CODE = fs.readFileSync(path.join(__dirname, '..', 'glow.js'), 'utf8');
 const VERSION = CODE.match(/const VERSION = '([\d.]+)'/)[1];
+const USERSCRIPT = fs.readFileSync(path.join(__dirname, '..', 'skyward-glow.user.js'), 'utf8');
 
 let failures = 0;
 function check(name, ok, detail) {
@@ -361,6 +362,59 @@ async function waitFor(fn, ms = 15000) {
       await ctx.close();
     }
 
+    // A userscript extension runs the script once each page has loaded, in
+    // the top window only (@noframes). This context does the same.
+    async function userscriptContext(device) {
+      const ctx = await browser.newContext(Object.assign({}, device || { viewport: { width: 1360, height: 900 } }, { timezoneId: 'America/New_York' }));
+      await ctx.addInitScript({ content: 'if (window.top === window) window.addEventListener("load", function () {\n' + USERSCRIPT + '\n});' });
+      await ctx.route('https://loganwestlake.github.io/**', (r) => r.fulfill({ status: 200, contentType: 'text/javascript', body: CODE }));
+      return ctx;
+    }
+    const hostOn = (pg) => pg.evaluate(() => !!document.getElementById('skyward-glow-host') && document.getElementById('skyward-glow-host').style.display !== 'none');
+    const pillOn = (pg) => pg.evaluate(() => { const b = document.getElementById('skyward-glow-host-open'); return !!b && b.style.display !== 'none'; });
+
+    for (const [name, device] of [['computer', null], ['iPhone', devices['iPhone 13']]]) {
+      console.log('Auto-open after signing in (' + name + ')');
+      const ctx = await userscriptContext(device);
+      const pg = await ctx.newPage();
+      const errs = [];
+      pg.on('pageerror', (e) => errs.push(e.message));
+      await pg.goto('http://localhost:' + PORT + '/test/seplog01.html');
+      await pg.waitForSelector('#skyward-glow-host-hint');
+      check('sign-in page shows the hint', (await pg.textContent('#skyward-glow-host-hint')).includes('after you sign in'));
+      check('Glow does not open on the sign-in page', !(await hostOn(pg)));
+      await pg.fill('#login', 'student');
+      await pg.fill('#password', 'secret');
+      await pg.click('#bSignIn');
+      await pg.waitForURL(/mock-gradebook\.html/, { timeout: 15000 });
+      check('after signing in it goes to the Gradebook', true);
+      await pg.waitForFunction(() => document.getElementById('skyward-glow-host'), null, { timeout: 15000 });
+      await pg.waitForTimeout(1200);
+      const cards = await pg.evaluate(() => { const r = document.getElementById('skyward-glow-host').shadowRoot; return r.querySelectorAll('.stat').length; });
+      check('Glow opens by itself with your grades', cards === 4, cards);
+      check('only one app on the page', await pg.evaluate(() => document.querySelectorAll('#skyward-glow-host').length === 1));
+
+      // Closing it sticks for this visit; the ✦ Glow button brings it back.
+      const closeSel = device ? '#skyward-glow-host .mtop [data-act=close]' : '#skyward-glow-host .side [data-act=close]';
+      await pg.locator(closeSel).click();
+      await pg.waitForTimeout(1200);
+      check('closing shows the ✦ Glow button', !(await hostOn(pg)) && await pillOn(pg));
+      await pg.reload();
+      await pg.waitForTimeout(2500);
+      check('closed stays closed on reload', !(await hostOn(pg)) && await pillOn(pg));
+      await pg.click('#skyward-glow-host-open');
+      await pg.waitForFunction(() => document.getElementById('skyward-glow-host'), null, { timeout: 10000 });
+      await pg.waitForTimeout(800);
+      check('✦ Glow reopens it', await hostOn(pg) && !(await pillOn(pg)));
+
+      // Visiting another Skyward page later doesn't redirect anywhere.
+      await pg.goto('http://localhost:' + PORT + '/test/sfhome01.html');
+      await pg.waitForTimeout(2000);
+      check('later visits to Home stay on Home', /sfhome01\.html/.test(pg.url()) && !(await hostOn(pg)) && await pillOn(pg), pg.url());
+      check('no script errors', errs.length === 0, errs);
+      await ctx.close();
+    }
+
     console.log('Install page on a computer');
     {
       const p4 = await browser.newPage();
@@ -368,6 +422,15 @@ async function waitFor(fn, ms = 15000) {
       await p4.waitForFunction(() => document.getElementById('ver').textContent.startsWith('v'));
       check('computer steps shown', await p4.evaluate(() => document.querySelector('[data-for="computer"]').hidden === false && document.querySelector('[data-for="ios"]').hidden));
       check('install page shows ' + VERSION, (await p4.textContent('#ver')) === 'v' + VERSION);
+      check('userscript version matches the app', (USERSCRIPT.match(/@version\s+([\d.]+)/) || [])[1] === VERSION);
+      check('userscript only runs on Skyward, never in frames', /@match\s+https:\/\/skyward\.iscorp\.com\/\*/.test(USERSCRIPT) && /@noframes/.test(USERSCRIPT));
+      const links = await p4.evaluate(() => ({
+        install: [...document.querySelectorAll('a[href="skyward-glow.user.js"]')].length,
+        skyward: [...document.querySelectorAll('a')].filter((a) => a.href === 'https://skyward.iscorp.com/p12eduhernandocofl/web/seplog01.w?nopopup=true').length
+      }));
+      check('install page links the userscript and your Skyward sign-in', links.install === 3 && links.skyward === 3, links);
+      const served = await p4.request.get('http://localhost:' + PORT + '/skyward-glow.user.js');
+      check('userscript file is served', served.ok() && (await served.text()).includes('==UserScript=='));
       await p4.close();
     }
 

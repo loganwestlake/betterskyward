@@ -14,7 +14,7 @@
 
   // Bump on every change. The install page and the app both show it, and
   // the app compares it with the published copy to offer updates.
-  const VERSION = '2.2.1';
+  const VERSION = '2.3.0';
   const UPDATE_URL = 'https://loganwestlake.github.io/betterskyward/glow.js';
   const INSTALL_URL = 'https://loganwestlake.github.io/betterskyward/';
 
@@ -1916,6 +1916,8 @@
 
   function teardown() {
     restoreViewport();
+    // Tells the auto-open userscript not to reopen Glow until asked.
+    try { sessionStorage.setItem('skywardGlow:dismissed', '1'); } catch (e) { /* private mode */ }
     const h = document.getElementById(HOST_ID);
     if (h) {
       clearInterval(h.__ticker);

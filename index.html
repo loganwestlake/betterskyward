@@ -29,6 +29,9 @@
     kbd { font:600 12px ui-monospace, monospace; background:#1f1f1f; border:1px solid var(--line); border-bottom-width:2px; border-radius:6px; padding:1px 6px; color:var(--text); }
     .note { font-size:13px; margin-top:28px; }
     .ver { display:inline-block; vertical-align:middle; font:600 13px Inter, system-ui, sans-serif; color:var(--muted); border:1px solid var(--line); border-radius:99px; padding:3px 10px; letter-spacing:.02em; }
+    .recommended { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+    .btn.inline { padding:6px 12px; font-size:13px; border-radius:9px; vertical-align:baseline; }
+    .step a:not(.btn) { color:var(--accent); }
     .platforms { display:flex; gap:4px; padding:4px; background:var(--surface); border:1px solid var(--line); border-radius:14px; margin-bottom:14px; }
     .platforms button { flex:1; font:600 14px Inter, system-ui, sans-serif; padding:10px 8px; border:0; border-radius:10px; background:none; color:var(--muted); cursor:pointer; min-height:44px; }
     .platforms button[aria-selected="true"] { background:linear-gradient(135deg, var(--accent), var(--accent2)); color:#0A0A0A; }
@@ -53,8 +56,21 @@
 
     <!-- iPhone / iPad: Safari runs bookmarks that start with "javascript:". -->
     <div class="platform" data-for="ios">
+      <section class="step recommended">
+        <span class="tag">iPhone · iPad · Recommended</span>
+        <h2>Opens by itself after you sign in</h2>
+        <p>A free Safari add-on runs Skyward Glow for you: open Skyward, sign in, and it takes you to your grades in Glow.</p>
+        <ol>
+          <li>Install <strong>Userscripts</strong> (free) from the App Store, open it once, and tap <strong>Set Userscripts Directory</strong> → <strong>Open</strong>.</li>
+          <li>Open <strong>Settings</strong> → <strong>Apps</strong> → <strong>Safari</strong> → <strong>Extensions</strong> → <strong>Userscripts</strong>. Turn it on and set <strong>skyward.iscorp.com</strong> to <strong>Allow</strong>.</li>
+          <li>In Safari, tap <a href="skyward-glow.user.js"><strong>Install Skyward Glow</strong></a>. Tap <strong>aA</strong> (or the puzzle piece) in the address bar → <strong>Userscripts</strong> → <strong>Install</strong>.</li>
+          <li>Tap <a class="btn inline" href="https://skyward.iscorp.com/p12eduhernandocofl/web/seplog01.w?nopopup=true">Open my Skyward</a> and sign in. Glow opens on your grades.</li>
+          <li>Bookmark that sign-in page (<strong>Share</strong> → <strong>Add to Favorites</strong>) so it's one tap from your start page.</li>
+        </ol>
+        <p class="note">Closed Glow? Tap the orange <strong>✦ Glow</strong> button at the bottom of any Skyward page to bring it back.</p>
+      </section>
       <section class="step">
-        <span class="tag">iPhone · iPad · Safari</span>
+        <span class="tag">Other way · bookmark</span>
         <h2>Set up the bookmark (once)</h2>
         <ol>
           <li>Tap <strong>Copy the bookmark code</strong>:<br>
@@ -74,8 +90,21 @@
 
     <!-- Android: Chrome runs a "javascript:" bookmark when you pick it from the address bar. -->
     <div class="platform" data-for="android">
+      <section class="step recommended">
+        <span class="tag">Android · Recommended</span>
+        <h2>Opens by itself after you sign in</h2>
+        <p>Chrome on Android can't run add-ons, so this uses <strong>Firefox</strong>: open Skyward, sign in, and it takes you to your grades in Glow.</p>
+        <ol>
+          <li>Install <strong>Firefox</strong> from the Play Store and open this page in it.</li>
+          <li>In Firefox, tap <strong>⋮</strong> → <strong>Add-ons</strong> → find <strong>Tampermonkey</strong> → <strong>+</strong> → <strong>Add</strong>.</li>
+          <li>Tap <a href="skyward-glow.user.js"><strong>Install Skyward Glow</strong></a>, then <strong>Install</strong> on the Tampermonkey screen.</li>
+          <li>Tap <a class="btn inline" href="https://skyward.iscorp.com/p12eduhernandocofl/web/seplog01.w?nopopup=true">Open my Skyward</a> and sign in. Glow opens on your grades.</li>
+          <li>Bookmark that sign-in page (<strong>⋮</strong> → <strong>☆</strong>) or add it to your home screen.</li>
+        </ol>
+        <p class="note">Closed Glow? Tap the orange <strong>✦ Glow</strong> button at the bottom of any Skyward page to bring it back.</p>
+      </section>
       <section class="step">
-        <span class="tag">Android · Chrome</span>
+        <span class="tag">Other way · Chrome bookmark</span>
         <h2>Set up the bookmark (once)</h2>
         <ol>
           <li>Tap <strong>Copy the bookmark code</strong>:<br>
@@ -94,8 +123,17 @@
     </div>
 
     <div class="platform" data-for="computer">
+      <section class="step recommended">
+        <span class="tag">Recommended · opens by itself</span>
+        <h2>Opens by itself after you sign in</h2>
+        <ol>
+          <li>Add <strong>Tampermonkey</strong> to Chrome, Edge or Firefox from the browser's extension store.</li>
+          <li>Click <a href="skyward-glow.user.js"><strong>Install Skyward Glow</strong></a>, then <strong>Install</strong> on the Tampermonkey screen.</li>
+          <li>Click <a class="btn inline" href="https://skyward.iscorp.com/p12eduhernandocofl/web/seplog01.w?nopopup=true">Open my Skyward</a> and sign in. Glow opens on your grades.</li>
+        </ol>
+      </section>
       <section class="step">
-        <span class="tag">Option A · easiest</span>
+        <span class="tag">Option A · bookmark</span>
         <h2>Save it as a bookmark</h2>
         <ol>
           <li>Show your bookmarks bar (<kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>B</kbd>).</li>

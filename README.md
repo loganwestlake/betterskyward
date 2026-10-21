@@ -22,11 +22,26 @@ published `glow.js` on GitHub, so it can tell you when an update is out.
 | File | What it is |
 |---|---|
 | `glow.js` | The script itself. This is what runs on Skyward. |
-| `index.html` | The install page: copy button and bookmark button. |
+| `index.html` | The install page: setup steps for each device. |
+| `skyward-glow.user.js` | The userscript that opens Glow by itself after you sign in. |
 | `test/mock-gradebook.html` | A fake Skyward gradebook with made-up grades, for testing. |
+| `test/seplog01.html`, `test/sfhome01.html` | Practice sign-in and home pages for the userscript. |
 | `test/pages/` | Fake Attendance and Schedule pages the practice gradebook links to. |
 | `test/server.js` | A pretend Skyward server for local testing. |
 | `test/e2e.js` | Automated test of every screen, in a real browser. |
+
+## Opens by itself after you sign in (recommended)
+
+`skyward-glow.user.js` is a userscript. With a userscript extension
+installed, it runs on Skyward pages: after you sign in it opens the Gradebook
+and starts Glow. Close Glow and it stays closed for that visit; the orange
+**✦ Glow** button brings it back. It always loads the newest `glow.js`.
+
+- **iPhone/iPad:** the free **Userscripts** app (Safari extension).
+- **Android:** **Firefox** with **Tampermonkey** (Chrome on Android has no add-ons).
+- **Computer:** **Tampermonkey** in Chrome, Edge or Firefox.
+
+Sign-in link: https://skyward.iscorp.com/p12eduhernandocofl/web/seplog01.w?nopopup=true
 
 ## Phones (iPhone and Android)
 
