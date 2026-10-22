@@ -14,7 +14,7 @@
 
   // Bump on every change. The install page and the app both show it, and
   // the app compares it with the published copy to offer updates.
-  const VERSION = '2.4.0';
+  const VERSION = '2.5.0';
   const UPDATE_URL = 'https://loganwestlake.github.io/betterskyward/glow.js';
   const INSTALL_URL = 'https://loganwestlake.github.io/betterskyward/';
 
@@ -733,9 +733,23 @@
   const PASSING = 4;
   const BELLS_KEY = 'skywardGlow:bells';
 
-  // Official Weeki Wachee SWARM-day times, one list per lunch, once known:
-  // { B: [{ kind: 'class', period: '1', start: '7:19', end: '8:10' }, ...] }
-  const OFFICIAL_SWARM = {};
+  // Official Weeki Wachee SWARM-day (Tuesday/Thursday) times, one list per
+  // lunch letter as Skyward writes it ("4B" is B lunch). 4th period is split
+  // around lunch's passing time. Add other lunches here as they're known.
+  const OFFICIAL_SWARM = {
+    B: [
+      { kind: 'class', period: '1', start: '7:19', end: '8:10' },
+      { kind: 'class', period: '2', start: '8:14', end: '8:58' },
+      { kind: 'class', period: '3', start: '9:02', end: '9:46' },
+      { kind: 'swarm', period: '8', start: '9:50', end: '10:28' },
+      { kind: 'lunch', period: '', start: '10:28', end: '10:58' },
+      { kind: 'class', period: '4', start: '10:58', end: '11:16' },
+      { kind: 'class', period: '4', start: '11:20', end: '11:46' },
+      { kind: 'class', period: '5', start: '11:50', end: '12:34' },
+      { kind: 'class', period: '6', start: '12:38', end: '13:22' },
+      { kind: 'class', period: '7', start: '13:26', end: '14:10' }
+    ]
+  };
 
   const periodNum = (p) => (String(p).match(/\d+/) || [''])[0];
   const hm = (mins) => String(Math.floor(mins / 60)).padStart(2, '0') + ':' + String(mins % 60).padStart(2, '0');
@@ -855,6 +869,24 @@
 
   function slotsFor(date) {
     return isSchoolDay(date) ? toSlots(dayRows(dayType(date)).rows) : [];
+  }
+
+  // A small picture for each subject, guessed from the class name.
+  function subjectIcon(name, kind) {
+    if (kind === 'lunch') return '🍔';
+    if (kind === 'swarm') return '🐝';
+    const n = String(name || '').toLowerCase();
+    const map = [
+      [/swarm/, '🐝'], [/forensic/, '🔍'], [/bio|anatomy|marine/, '🔬'], [/chem|physics|science|earth|environment|astronomy/, '🧪'],
+      [/geometry|algebra|calculus|statistic|trig|math|pre-?calc/, '📐'], [/english|literature|reading|writing|language arts|journalism/, '📚'],
+      [/history|geograph|civics|government|economics|psychology|sociology|social/, '🌍'], [/spanish/, '🇪🇸'], [/french/, '🇫🇷'],
+      [/german/, '🇩🇪'], [/chinese|mandarin/, '🇨🇳'], [/latin|asl|sign language/, '🗣️'], [/leadership|aice|seminar/, '🌟'],
+      [/\bpe\b|physical|health|weight|fitness|sport/, '🏃'], [/art|draw|paint|ceramic|design/, '🎨'], [/music|band|chorus|choir|orchestra|guitar/, '🎵'],
+      [/computer|coding|program|cyber|tech|engineering|robot/, '💻'], [/culinary|cooking|nutrition/, '🍳'], [/drama|theat/, '🎭'],
+      [/jrotc|rotc/, '🎖️'], [/business|finance|marketing|accounting/, '💼'], [/agri|vet/, '🌱']
+    ];
+    const hit = map.find(([re]) => re.test(n));
+    return hit ? hit[1] : '📘';
   }
 
   function slotTitle(slot) {
@@ -1220,7 +1252,7 @@
   function courseRow(c) {
     const g = c.grades[state.term];
     return '<li><button class="row tone-' + tone(g) + '" data-course="' + esc(c.key) + '">' +
-      '<span class="dot"></span><span class="row-main"><b>' + esc(c.name) + '</b><small>' + esc(c.teacher || ('Period ' + c.period)) + '</small></span>' +
+      '<span class="row-icon" aria-hidden="true">' + subjectIcon(c.name) + '</span><span class="row-main"><b>' + esc(c.name) + '</b><small>' + esc(c.teacher || ('Period ' + c.period)) + '</small></span>' +
       '<span class="row-score">' + (g ? esc(g.score != null ? Math.round(g.score) : g.raw) : '—') + '</span></button></li>';
   }
 
@@ -1334,7 +1366,7 @@
       '<div class="card-top">' +
         '<div class="meta">' +
           (c.period ? '<span class="period">Period ' + esc(c.period) + (c.time ? ' · ' + esc(c.time) : '') + '</span>' : '') +
-          '<h2>' + esc(c.name) + '</h2>' +
+          '<h2><span class="subj" aria-hidden="true">' + subjectIcon(c.name, periodNum(c.period) === SWARM_PERIOD ? 'swarm' : 'class') + '</span>' + esc(c.name) + '</h2>' +
           (c.teacher ? '<p class="teacher">' + esc(c.teacher) + '</p>' : '') +
         '</div>' +
         '<div class="score">' + ring(g, 72) +
@@ -1493,7 +1525,7 @@
     const notes = {
       yours: 'Using the times you entered.',
       skyward: 'Times from Skyward. Lunch is the gap between classes.',
-      school: 'Official SWARM-day times for lunch ' + letter + '.',
+      school: 'Weeki Wachee\'s SWARM-day times for ' + (letter ? letter + ' lunch' : 'your lunch') + '.',
       estimated: 'These SWARM-day times are an estimate. Tap Edit times and enter your school\'s real schedule so the countdowns are right.'
     };
     html += '<p class="sched-note' + (source === 'estimated' ? ' warn' : '') + '">' + esc(notes[source]) + '</p>';
@@ -1501,18 +1533,28 @@
     if (!slots.length) {
       return html + '<p class="empty">' + (data.courses.length ? 'No class times yet. Tap Edit times to add them.' : 'Open your Skyward Gradebook to load your classes.') + '</p>';
     }
-    html += '<ol class="timeline">' + slots.map((sl) => {
+    // A "now" line where the current time falls, unless a slot is under way
+    // (that slot is highlighted instead).
+    const inSlot = live && slots.some((sl) => mins >= sl.start && mins < sl.end);
+    const nowAt = live && !inSlot && mins >= slots[0].start - 60 && mins < slots[slots.length - 1].end
+      ? slots.findIndex((sl) => sl.start > mins) : -1;
+    const nowLine = '<li class="now-line" aria-label="Now"><span>Now · ' + clock(mins) + '</span></li>';
+    html += '<ol class="timeline">' + slots.map((sl, i) => {
       const g = sl.kind === 'class' && sl.course && sl.course.grades[state.term];
+      const line = i === nowAt ? nowLine : '';
       const cur = live && mins >= sl.start && mins < sl.end;
       const past = live && mins >= sl.end;
       const pct = cur ? Math.round(((mins - sl.start) / (sl.end - sl.start)) * 100) : 0;
       const label = sl.kind === 'lunch' ? 'Lunch' : sl.kind === 'swarm' ? 'Period ' + SWARM_PERIOD + ' · SWARM' : 'Period ' + (sl.course ? sl.course.period : sl.period);
-      return '<li class="slot slot-' + sl.kind + ' tone-' + (sl.kind === 'class' ? tone(g) : 'b') + (cur ? ' current' : '') + (past ? ' past' : '') + '">' +
+      return line + '<li class="slot slot-' + sl.kind + ' tone-' + (sl.kind === 'class' ? tone(g) : 'b') + (cur ? ' current' : '') + (past ? ' past' : '') + '">' +
         '<div class="slot-time"><b>' + clock(sl.start) + '</b><small>' + clock(sl.end) + '</small></div>' +
         '<button class="slot-card"' + (sl.course ? ' data-course="' + esc(sl.course.key) + '"' : ' disabled') + '>' +
-          '<span class="period">' + esc(label) + (cur ? ' · now' : '') + '</span>' +
-          '<b>' + esc(slotTitle(sl)) + '</b>' + (slotSub(sl) ? '<small>' + esc(slotSub(sl)) + '</small>' : '') +
-          (cur ? '<span class="progress"><span style="width:' + pct + '%"></span></span>' : '') +
+          '<span class="slot-icon" aria-hidden="true">' + subjectIcon(sl.course && sl.course.name, sl.kind) + '</span>' +
+          '<span class="slot-body">' +
+            '<span class="period">' + esc(label) + (cur ? ' · now' : '') + '</span>' +
+            '<b>' + esc(slotTitle(sl)) + '</b>' + (slotSub(sl) ? '<small>' + esc(slotSub(sl)) + '</small>' : '') +
+            (cur ? '<span class="progress"><span style="width:' + pct + '%"></span></span>' : '') +
+          '</span>' +
           (g ? '<span class="slot-grade">' + esc(g.raw) + '</span>' : '') +
         '</button></li>';
     }).join('') + '</ol>';
@@ -1549,7 +1591,7 @@
       '</div>' +
       '<div class="editor-actions">' +
         '<button class="btn" data-act="save-times">Save</button>' +
-        '<button class="btn ghost" data-act="reset-times">' + (type === 'swarm' ? 'Reset to estimate' : 'Reset to Skyward') + '</button>' +
+        '<button class="btn ghost" data-act="reset-times">' + (type === 'regular' ? 'Reset to Skyward' : officialSwarm() ? 'Reset to school times' : 'Reset to estimate') + '</button>' +
         '<button class="btn ghost" data-act="cancel-times">Cancel</button>' +
       '</div></div>';
   }
@@ -2257,13 +2299,23 @@ button.chip{cursor:pointer}
 
 /* schedule */
 .timeline{list-style:none;padding:0;display:flex;flex-direction:column;gap:10px;position:relative}
-.slot{display:grid;grid-template-columns:90px 1fr;gap:16px;align-items:stretch}
-.slot-time{display:flex;flex-direction:column;align-items:flex-end;padding-top:14px;font-variant-numeric:tabular-nums}
+.timeline{gap:8px}
+.slot{display:grid;grid-template-columns:84px 1fr;gap:14px;align-items:stretch}
+.slot-time{display:flex;flex-direction:column;align-items:flex-end;justify-content:center;font-variant-numeric:tabular-nums}
 .slot-time b{font-size:14px}.slot-time small{color:var(--muted);font-size:12px}
-.slot-card{position:relative;display:flex;flex-direction:column;gap:2px;padding:14px 18px;padding-right:90px;border-radius:16px;border:1px solid var(--line);background:var(--surface);cursor:pointer;text-align:left;
+.slot-card{position:relative;display:flex;flex-direction:row;align-items:center;gap:14px;padding:12px 16px;padding-right:84px;border-radius:16px;border:1px solid var(--line);background:var(--surface);cursor:pointer;text-align:left;
   box-shadow:var(--shadow);border-left:4px solid var(--tone);transition:transform .15s}
 .slot-card:hover{transform:translateX(3px)}
-.slot-card b{font-size:16px}.slot-card small{color:var(--muted);font-size:13px}
+.slot-card b{font-size:16px;line-height:1.25}.slot-card small{color:var(--muted);font-size:13px}
+.slot-icon{flex:none;display:grid;place-items:center;width:40px;height:40px;border-radius:12px;font-size:20px;line-height:1;
+  background:color-mix(in srgb,var(--tone) 14%,var(--surface2))}
+.slot-body{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1}
+.now-line{position:relative;display:flex;align-items:center;gap:10px;margin:2px 0 2px 98px;color:var(--accent);font-size:12px;font-weight:700;letter-spacing:.04em}
+.now-line::before{content:"";position:absolute;left:-6px;width:10px;height:10px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 25%,transparent)}
+.now-line::after{content:"";flex:1;height:2px;border-radius:2px;background:linear-gradient(90deg,var(--accent),transparent)}
+.now-line span{padding-left:10px;white-space:nowrap}
+.subj{margin-right:8px;font-size:.95em}
+.row-icon{flex:none;width:28px;text-align:center;font-size:18px}
 .slot.current .slot-card{background:linear-gradient(120deg,color-mix(in srgb,var(--accent) 16%,var(--surface)),var(--surface));border-color:color-mix(in srgb,var(--accent) 50%,var(--line))}
 .slot.current .period{color:var(--accent)}
 .slot.past{opacity:.55}
@@ -2353,7 +2405,13 @@ tr.group td{font-weight:700;color:var(--accent);background:color-mix(in srgb,var
   .seg{width:100%}.seg-btn{flex:1;padding:7px 2px;font-size:11.5px}
   .filters{min-width:100%}.search{max-width:none}
   .grid{grid-template-columns:1fr}
-  .slot{grid-template-columns:64px 1fr;gap:10px}
+  .slot{grid-template-columns:70px 1fr;gap:8px}
+  .slot-time b,.slot-time small{white-space:nowrap}
+  .slot-time b{font-size:13px}.slot-time small{font-size:11.5px}
+  .now-line{margin-left:78px}
+  .slot-card{padding:10px 12px;padding-right:64px;gap:10px}
+  .slot-icon{width:34px;height:34px;font-size:17px}
+  .slot-grade{right:12px;font-size:17px}
 }
 /* phones and tablets */
 .main{overscroll-behavior:contain;-webkit-overflow-scrolling:touch}

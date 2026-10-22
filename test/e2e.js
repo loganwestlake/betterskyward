@@ -73,7 +73,9 @@ async function waitFor(fn, ms = 15000) {
     await click('.side [data-view=grades]');
     const tabs = await q('.tab');
     check('grades tabs in Skyward order with Q3 and Q4', JSON.stringify(tabs) === JSON.stringify(['Q1', 'Q2', 'SM1', 'Q3', 'Q4', 'FIN']), tabs);
-    const cards = await q('.card h2');
+    // Card titles start with a subject icon; compare the names after it.
+    const cards = (await q('.card h2')).map((t) => t.replace(/^[^A-Za-z]+/, ''));
+    check('cards show subject icons', (await q('.card h2 .subj')).length === 8);
     check('8 class cards (7 classes + SWARM)', cards.length === 8, cards);
     check('teachers read', (await q('.card .teacher')).length === 8);
     check('sorted by period', cards[0] === 'English 1' && cards[6] === 'Geometry' && cards[7] === 'Swarm', cards);
@@ -192,9 +194,29 @@ async function waitFor(fn, ms = 15000) {
     ({ page, errors, q, click } = await openApp(browser, BASE, undefined, new Date('2026-10-20T09:00:00-04:00'), 'America/New_York'));
     await page.evaluate(() => localStorage.removeItem('skywardGlow:bells'));
     await click('.side [data-view=schedule]');
+    // B lunch (from "4B" in Skyward) gets Weeki Wachee's real SWARM-day times.
+    const official = await page.evaluate(() => [...document.getElementById('skyward-glow-host').shadowRoot.querySelectorAll('.slot')]
+      .map((li) => li.querySelector('.slot-time b').textContent + '-' + li.querySelector('.slot-time small').textContent + ' ' + li.querySelector('.slot-card b').textContent));
+    check('official SWARM-day times for B lunch', JSON.stringify(official) === JSON.stringify([
+      '7:19 AM-8:10 AM English 1', '8:14 AM-8:58 AM Pre-Advanced Placement World History and Geography', '9:02 AM-9:46 AM Forensic Science 1',
+      '9:50 AM-10:28 AM SWARM', '10:28 AM-10:58 AM Lunch B', '10:58 AM-11:16 AM Biology 1', '11:20 AM-11:46 AM Biology 1',
+      '11:50 AM-12:34 PM Leadership Skills Development', '12:38 PM-1:22 PM Spanish 1', '1:26 PM-2:10 PM Geometry']), official);
+    check('labeled as the school\'s times', (await q('.sched-note'))[0]?.startsWith('Weeki Wachee'), await q('.sched-note'));
+    check('every slot has a subject icon', (await q('.slot-icon')).length === 10 && (await q('.slot-icon'))[3] === '🐝' && (await q('.slot-icon'))[4] === '🍔', await q('.slot-icon'));
+    check('a "now" line sits between 2nd and 3rd period at 9:00', await page.evaluate(() => {
+      const li = document.getElementById('skyward-glow-host').shadowRoot.querySelector('.now-line');
+      return !!li && li.nextElementSibling.textContent.includes('Forensic') && li.textContent.includes('9:00 AM');
+    }));
+    await click('.side [data-view=home]');
+    check('home: Forensic Science is up next at 9:00', (await q('.now-big'))[0] === 'Forensic Science 1' && /starts in 1:5\d/.test((await q('.now-live'))[0] || ''), await q('.now'));
+
+    // Other lunches have no official times yet, so they get the estimate.
+    await page.evaluate(() => localStorage.setItem('skywardGlow:bells', JSON.stringify({ lunch: 'C' })));
+    await page.evaluate(CODE); await page.evaluate(CODE); await page.waitForTimeout(600);
+    await click('.side [data-view=schedule]');
     check('Tue/Thu tab picked on a Tuesday', (await q('.sched-bar .seg-btn.on'))[0] === 'Tue · Thu · SWARM', await q('.sched-bar'));
     const tue = await q('.slot .slot-card b');
-    check('SWARM day has 7 classes, SWARM and lunch', tue.length === 9 && tue.includes('SWARM') && tue.includes('Lunch B'), tue);
+    check('SWARM day has 7 classes, SWARM and lunch', tue.length === 9 && tue.includes('SWARM') && tue.includes('Lunch C'), tue);
     check('SWARM shows the Period 8 teacher', (await q('.slot-swarm .slot-card small'))[0] === 'Daniel Reyes', await q('.slot-swarm'));
     check('estimated times are labeled', (await q('.sched-note.warn')).length === 1);
     const times = await page.evaluate(() => [...document.getElementById('skyward-glow-host').shadowRoot.querySelectorAll('.slot-time')]
@@ -277,7 +299,7 @@ async function waitFor(fn, ms = 15000) {
       await page.evaluate(() => localStorage.setItem('skywardGlow:bells', JSON.stringify({ regular: 'x', swarm: [null, { kind: 'class', start: 'a' }], lunch: 5 })));
       await page.evaluate(CODE); await page.evaluate(CODE); await page.waitForTimeout(600);
       check('app starts with damaged saved times', (await q('.stat')).length === 4, await q('.view'));
-      check('falls back to the estimate', await (async () => { await click('.side [data-view=schedule]'); return (await q('.sched-note.warn')).length === 1; })());
+      check('falls back to the school times', await (async () => { await click('.side [data-view=schedule]'); return (await q('.sched-note'))[0]?.startsWith('Weeki Wachee'); })());
       check('no script errors', errors.length === 0, errors);
       await page.evaluate(() => localStorage.removeItem('skywardGlow:bells'));
       await page.close();
@@ -294,7 +316,7 @@ async function waitFor(fn, ms = 15000) {
       const mon = await q('.slot .slot-card b');
       check('shared period shows once', mon.filter((t) => /Forensic/.test(t)).length === 1 && mon.length === 8, mon);
       await click('.sched-bar [data-sched="swarm"]');
-      check('SWARM estimate unaffected', (await q('.slot .slot-card b')).length === 9);
+      check('SWARM day unaffected', (await q('.slot .slot-card b')).length === 10);
       check('no script errors', errors.length === 0, errors);
       await page.close();
 
