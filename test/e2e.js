@@ -84,8 +84,24 @@ async function waitFor(fn, ms = 15000) {
     await waitFor(async () => (await q('.asg')).length > 0, 8000);
     const asg = await q('.asg-main b');
     check('assignments read from Skyward popup', asg.includes('Unit 2 Test') && asg.includes('Quiz 3'), asg);
-    check('category rows not duplicated', (await q('.cat')).length === 2, await q('.cat'));
+    check('category rows are not listed as assignments', !asg.some((t) => /weighted/i.test(t)) && asg.length === 4, asg);
+    const cats = await q('.asg-cat h4');
+    check('categories become subheadings', JSON.stringify(cats) === JSON.stringify(['Other', 'Extension Activities', 'Class Work', 'Summative']), cats);
+    check('subheadings show weight and adjusted weight', (await q('.asg-cat small'))[0] === 'Weighted 10% · adjusted to 16.67%', await q('.asg-cat small'));
+    check('subheadings show the category grade', (await q('.asg-cat-grade'))[0] === '95% A', await q('.asg-cat-grade'));
+    const grouped = await page.evaluate(() => [...document.getElementById('skyward-glow-host').shadowRoot.querySelectorAll('.asg-group')]
+      .map((g) => g.querySelector('h4').textContent + ': ' + [...g.querySelectorAll('.asg-main b')].map((b) => b.textContent).join(', ')));
+    check('assignments listed under their category', JSON.stringify(grouped) === JSON.stringify([
+      'Other: Lab Report: Density', 'Extension Activities: Unit 2 Test', 'Class Work: Homework 2.4, Quiz 3', 'Summative: ']), grouped);
+    check('category grade colored by grade (95% green)', await page.evaluate(() => {
+      const r = document.getElementById('skyward-glow-host').shadowRoot;
+      const b = r.querySelector('.asg-cat-grade');
+      // The app's "A" green (#34D399 in the dark theme), not the orange accent.
+      return getComputedStyle(b).color === 'rgb(52, 211, 153)';
+    }));
+    check('empty category says so', (await q('.asg-none'))[0] === 'No assignments yet.');
     check('missing work flagged', (await q('.asg')).some((t) => t.includes('Missing')));
+    check('points shown with percent', (await q('.asg-score'))[0] === '19 out of 2095%', await q('.asg-score'));
     check('Skyward popup closed afterwards', await page.evaluate(() =>
       ![...document.querySelectorAll('.ui-dialog')].some((d) => d.getClientRects().length)));
     await page.keyboard.press('Escape');

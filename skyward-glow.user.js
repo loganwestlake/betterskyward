@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Better Skyward
 // @namespace    https://loganwestlake.github.io/betterskyward/
-// @version      2.5.1
+// @version      2.6.0
 // @description  Opens Better Skyward by itself after you sign in to Skyward Family Access.
 // @match        https://skyward.iscorp.com/*
 // @noframes

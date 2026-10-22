@@ -58,13 +58,19 @@ document.addEventListener('click',function(e){
   d.querySelector('.ui-dialog-titlebar-close').onclick=function(ev){ev.preventDefault();d.remove();};
   setTimeout(function(){
     var cls=a.closest('tr'); d.querySelector('.ui-dialog-title').textContent='Class Grades: '+a.dataset.lit;
-    d.querySelector('.body').innerHTML='<table><thead><tr><th>Due</th><th>Assignment</th><th>Score</th><th>Points Earned</th></tr></thead><tbody>'+
-      '<tr><td colspan="4"><b>MAJOR GRADES</b> weighted at 60.00%</td></tr>'+
-      '<tr><td>10/02/26</td><td>Unit 2 Test</td><td>88</td><td>44 out of 50</td></tr>'+
-      '<tr><td>10/14/26</td><td>Lab Report: Density</td><td>95</td><td>19 out of 20</td></tr>'+
-      '<tr><td colspan="4"><b>MINOR GRADES</b> weighted at 40.00%</td></tr>'+
-      '<tr><td>10/09/26</td><td>Homework 2.4</td><td>*</td><td>Missing</td></tr>'+
-      '<tr><td>10/16/26</td><td>Quiz 3</td><td>72</td><td>18 out of 25</td></tr></tbody></table>';
+    // Like real Skyward: category rows carry the category's own grade, and
+    // the bold category name runs straight into "weighted at".
+    var cat=function(n,w,adj,g,sc,pts){return '<tr class="sf_Section cat"><td><b>'+n+'</b>weighted at '+w+', adjusted to '+adj+'</td><td></td><td>'+g+'</td><td>'+sc+'</td><td>'+pts+'</td><td></td></tr>';};
+    d.querySelector('.body').innerHTML='<table><thead><tr><th>Due</th><th>Assignment</th><th>Grade</th><th>Score(%)</th><th>Points Earned</th><th>Missing</th></tr></thead><tbody>'+
+      cat('Other','10.00%','16.67%','A','95.00','19 out of 20')+
+      '<tr><td>10/14/26</td><td>Lab Report: Density</td><td>A</td><td>95.00</td><td>19 out of 20</td><td></td></tr>'+
+      cat('Extension Activities','30.00%','50.00%','B','88.00','44 out of 50')+
+      '<tr><td>10/02/26</td><td>Unit 2 Test</td><td>B</td><td>88.00</td><td>44 out of 50</td><td></td></tr>'+
+      cat('Class Work','20.00%','33.33%','D','64.00','18 out of 28')+
+      '<tr><td>10/09/26</td><td>Homework 2.4</td><td></td><td></td><td>0 out of 3</td><td>Missing</td></tr>'+
+      '<tr><td>10/16/26</td><td>Quiz 3</td><td>C</td><td>72.00</td><td>18 out of 25</td><td></td></tr>'+
+      cat('Summative','40.00%','0.00%','','','')+
+      '</tbody></table>';
   },500);
 });
 // Menu clicks. With ?strict=1 the menu ignores clicks that don't come from

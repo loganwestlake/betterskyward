@@ -14,7 +14,7 @@
 
   // Bump on every change. The install page and the app both show it, and
   // the app compares it with the published copy to offer updates.
-  const VERSION = '2.5.1';
+  const VERSION = '2.6.0';
   const UPDATE_URL = 'https://loganwestlake.github.io/betterskyward/glow.js';
   const INSTALL_URL = 'https://loganwestlake.github.io/betterskyward/';
 
@@ -1445,6 +1445,13 @@
       '</aside>';
   }
 
+  // Skyward's assignment list mixes category rows ("Other weighted at
+  // 10.00%, adjusted to 16.67%", often with the category's own grade in the
+  // other columns) with the assignments in that category. Category rows
+  // become headings; each assignment is listed under the one before it.
+  const CATEGORY_RE = /^(.*?)\s*weighted at\s*([\d.]+\s*%)(?:\s*,?\s*adjusted to\s*([\d.]+\s*%))?/i;
+  const shortPct = (p) => p ? p.replace(/\s+/g, '').replace(/\.0+%$/, '%').replace(/(\.\d*?)0+%$/, '$1%') : '';
+
   function assignmentsHtml(result) {
     if (!result.tables.length) return '<p class="empty">No assignments listed.</p>';
     return result.tables.map((t) => {
@@ -1452,20 +1459,72 @@
       const col = (re) => head.findIndex((h) => re.test(h));
       const nameCol = col(/assign|description|name/);
       if (nameCol === -1) return tableHtml(t);
-      const dueCol = col(/due|date/);
-      const scoreCol = col(/score|points|pts|grade|mark/);
-      return (t.title ? '<h4>' + esc(t.title) + '</h4>' : '') + '<ul class="assignments">' + t.rows.map((r) => {
-        if (r.filter(Boolean).length === 1 || r.length < Math.min(3, t.head.length)) {
-          return '<li class="cat">' + esc(r.filter(Boolean).join(' · ')) + '</li>';
+      const cols = {
+        due: col(/due|date/),
+        points: col(/points|pts|earned|out of/),
+        score: col(/score|percent|%/),
+        grade: col(/^grade$|letter|mark/),
+        missing: col(/missing/),
+        noCount: col(/no ?count|exempt/)
+      };
+
+      const groups = [];
+      let current = null;
+      for (const r of t.rows) {
+        const cat = categoryOf(r, cols);
+        if (cat) { current = Object.assign(cat, { items: [] }); groups.push(current); continue; }
+        if (r.filter(Boolean).length === 1 && r.length < Math.max(3, t.head.length)) {
+          current = { name: r.find(Boolean), items: [] };
+          groups.push(current);
+          continue;
         }
-        const score = scoreCol > -1 ? r[scoreCol] : r.slice(nameCol + 1).find((x) => /\d/.test(x)) || '';
-        const pct = scorePercent(score, r);
-        const missing = /missing|\*|incomplete/i.test(r.join(' '));
-        return '<li class="asg tone-' + (missing ? 'f' : toneOf(pct)) + '">' +
-          '<span class="asg-main"><b>' + esc(r[nameCol] || r.find(Boolean)) + '</b><small>' + esc(dueCol > -1 ? r[dueCol] : '') + (missing ? ' · Missing' : '') + '</small></span>' +
-          '<span class="asg-score">' + esc(score || '—') + (pct != null ? '<small>' + Math.round(pct) + '%</small>' : '') + '</span></li>';
-      }).join('') + '</ul>';
+        if (!current) { current = { name: '', items: [] }; groups.push(current); }
+        current.items.push(r);
+      }
+
+      return (t.title ? '<h4>' + esc(t.title) + '</h4>' : '') + groups.map((g) => {
+        const weight = g.weight ? 'Weighted ' + shortPct(g.weight) +
+          (g.adjusted && shortPct(g.adjusted) !== shortPct(g.weight) ? ' · adjusted to ' + shortPct(g.adjusted) : '') : '';
+        const heading = g.name || weight ? '<header class="asg-cat tone-' + toneOf(g.pct) + '">' +
+            '<div><h4>' + esc(g.name || 'Assignments') + '</h4>' + (weight ? '<small>' + esc(weight) + '</small>' : '') + '</div>' +
+            (g.mark ? '<b class="asg-cat-grade">' + esc(g.mark) + '</b>' : '') +
+          '</header>' : '';
+        const list = g.items.length
+          ? '<ul class="assignments">' + g.items.map((r) => assignmentRow(r, nameCol, cols)).join('') + '</ul>'
+          : '<p class="asg-none">No assignments yet.</p>';
+        return '<section class="asg-group">' + heading + list + '</section>';
+      }).join('');
     }).join('');
+  }
+
+  function categoryOf(r, cols) {
+    for (const cell of r) {
+      const m = cell.match(CATEGORY_RE);
+      if (!m) continue;
+      const others = r.filter((x) => x !== cell && x);
+      const pctCell = cols.score > -1 && r[cols.score] && /\d/.test(r[cols.score]) ? r[cols.score] : others.find((x) => /^\d+(\.\d+)?\s*%?$/.test(x));
+      const letter = others.find((x) => /^[ABCDF][+-]?$/.test(x));
+      const pct = pctCell ? parseFloat(pctCell) : null;
+      const mark = pct != null ? fmt(pct, pct % 1 ? 1 : 0) + '%' + (letter ? ' ' + letter : '') : letter || '';
+      return { name: clean(m[1]), weight: m[2], adjusted: m[3] || '', pct, mark };
+    }
+    return null;
+  }
+
+  function assignmentRow(r, nameCol, cols) {
+    const cell = (i) => (i > -1 ? r[i] || '' : '');
+    const shown = cell(cols.points) || cell(cols.score) || cell(cols.grade) ||
+      r.slice(nameCol + 1).find((x) => /\d/.test(x)) || '';
+    const pctFromScore = cols.score > -1 && /^\d+(\.\d+)?\s*%?$/.test(cell(cols.score)) ? parseFloat(cell(cols.score)) : null;
+    const pct = scorePercent(cell(cols.points), r) ?? pctFromScore ?? scorePercent(shown, r);
+    const missing = (cols.missing > -1 && /\S/.test(cell(cols.missing)) && !/^(no|n)$/i.test(cell(cols.missing))) ||
+      /missing|incomplete/i.test(r.join(' ')) || /^\*$/.test(shown);
+    const notCounted = cols.noCount > -1 && /\S/.test(cell(cols.noCount)) && !/^(no|n)$/i.test(cell(cols.noCount));
+    const due = cell(cols.due);
+    return '<li class="asg tone-' + (missing ? 'f' : toneOf(pct)) + '">' +
+      '<span class="asg-main"><b>' + esc(r[nameCol] || r.find(Boolean)) + '</b><small>' +
+        esc([due, missing ? 'Missing' : '', notCounted ? 'Not counted' : ''].filter(Boolean).join(' · ')) + '</small></span>' +
+      '<span class="asg-score">' + esc(shown && shown !== '*' ? shown : '—') + (pct != null ? '<small>' + Math.round(pct) + '%</small>' : '') + '</span></li>';
   }
 
   function scorePercent(score, row) {
@@ -2316,6 +2375,13 @@ button.chip{cursor:pointer}
 .asg-score{text-align:right;font-weight:800;font-variant-numeric:tabular-nums;display:flex;flex-direction:column}
 .asg-score small{color:var(--tone);font-size:12px}
 .cat{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--accent);padding:12px 2px 4px}
+.asg-group{margin-bottom:18px}
+.asg-cat{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 4px 8px;margin-bottom:6px;border-bottom:2px solid color-mix(in srgb,var(--tone) 45%,var(--line))}
+.asg-cat h4{margin:0;font-size:15px;font-weight:800;letter-spacing:-.01em;text-transform:none;color:var(--text)}
+.asg-cat small{display:block;color:var(--muted);font-size:12px;margin-top:2px}
+.asg-cat-grade{flex:none;font-size:15px;font-weight:800;color:var(--tone);font-variant-numeric:tabular-nums;padding:4px 10px;border-radius:99px;background:color-mix(in srgb,var(--tone) 14%,transparent)}
+.asg-cat.tone-none{--tone:var(--accent)}
+.asg-none{color:var(--muted);font-size:13px;padding:6px 4px 2px;font-style:italic}
 .loading{display:flex;align-items:center;gap:12px;color:var(--muted);padding:20px 0}
 .spinner{width:18px;height:18px;border-radius:50%;border:2px solid var(--line);border-top-color:var(--accent);animation:spin .8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
