@@ -14,7 +14,7 @@
 
   // Bump on every change. The install page and the app both show it, and
   // the app compares it with the published copy to offer updates.
-  const VERSION = '2.5.0';
+  const VERSION = '2.5.1';
   const UPDATE_URL = 'https://loganwestlake.github.io/betterskyward/glow.js';
   const INSTALL_URL = 'https://loganwestlake.github.io/betterskyward/';
 
@@ -60,7 +60,7 @@
   function parseGrade(text) {
     const t = clean(text);
     const num = t.match(/-?\d+(\.\d+)?/);
-    const letter = t.match(/\b([A-F][+-]?)\b/);
+    const letter = t.match(/\b([ABCDF][+-]?)(?![A-Za-z])/);
     return {
       raw: t,
       score: num ? parseFloat(num[0]) : null,
@@ -70,7 +70,7 @@
 
   function titleCase(s) {
     if (s !== s.toUpperCase()) return s;
-    return s.toLowerCase().replace(/\b([a-z])/g, (m) => m.toUpperCase())
+    return s.toLowerCase().replace(/(^|[\s\-/(&])(\p{L})/gu, (m, sep, ch) => sep + ch.toUpperCase())
       .replace(/\b(Ap|Ib|Aice|Ese|Pe|Jrotc|Ii|Iii|Iv)\b/g, (m) => m.toUpperCase())
       .replace(/\bHon\b/g, 'Honors');
   }
@@ -657,7 +657,7 @@
       const g = c.grades[term];
       if (!g) continue;
       if (g.score != null) scores.push(g.score);
-      if (g.letter) points.push(GPA_POINTS[g.letter.charAt(0)]);
+      if (g.letter && GPA_POINTS[g.letter.charAt(0)] != null) points.push(GPA_POINTS[g.letter.charAt(0)]);
     }
     return { avg: avg(scores), gpa: avg(points), count: scores.length || points.length };
   }
@@ -751,7 +751,7 @@
     ]
   };
 
-  const periodNum = (p) => (String(p).match(/\d+/) || [''])[0];
+  const periodNum = (p) => { const m = String(p).match(/\d+/); return m ? String(parseInt(m[0], 10)) : ''; };
   const hm = (mins) => String(Math.floor(mins / 60)).padStart(2, '0') + ':' + String(mins % 60).padStart(2, '0');
   const fromHm = (s) => {
     const m = String(s || '').match(/^(\d{1,2}):(\d{2})/);
@@ -861,7 +861,7 @@
     if (type === 'regular') return { rows: skywardDay(), source: 'skyward' };
     const official = officialSwarm();
     if (official) return { rows: official, source: 'school' };
-    return { rows: estimateSwarm(skywardDay()), source: 'estimated' };
+    return { rows: estimateSwarm(dayRows('regular').rows), source: 'estimated' };
   }
 
   const dayType = (date) => (SWARM_DAYS.includes(date.getDay()) ? 'swarm' : 'regular');
@@ -1002,7 +1002,12 @@
       if (until <= Date.now()) ended = true;
       el.innerHTML = countdownText(until, el.classList.contains('short') ? 'short' : 'long');
     }
+    // The schedule's highlight, progress bar and "now" line move each minute.
+    const minute = Math.floor(Date.now() / 60000);
+    const newMinute = minute !== tick.lastMinute;
+    tick.lastMinute = minute;
     if (ended && (state.view === 'home' || state.view === 'schedule')) renderViewOnly();
+    else if (newMinute && state.view === 'schedule' && !state.editing && !state.drawer) renderViewOnly();
   }
 
   // ============================================================ snapshot
@@ -1419,7 +1424,7 @@
     else if (!c.links[term] || !data.live) body = '<p class="empty">Assignment details are only available when Better Skyward is started on the Gradebook page.</p>';
     else if (!a || a.status === 'loading') body = '<div class="loading"><span class="spinner"></span>Loading assignments from Skyward…</div>';
     else if (a.status === 'ok') body = assignmentsHtml(a.result);
-    else body = '<p class="empty">Couldn\'t read the assignment list here.</p>';
+    else body = '<p class="empty">Couldn\'t read the assignment list this time.</p><button class="btn ghost small" data-act="retry-assignments">Try again</button>';
 
     return '<div class="scrim" data-act="drawer-close"></div>' +
       '<aside class="drawer tone-' + tone(g) + '" role="dialog" aria-label="' + esc(c.name) + '">' +
@@ -1485,7 +1490,8 @@
   async function loadAssignments(c, term) {
     const id = c.key + '|' + term;
     const link = c.links[term];
-    if (!link || !data.live || state.assignments[id]) return;
+    const known = state.assignments[id];
+    if (!link || !data.live || (known && known.status !== 'error')) return;
     state.assignments[id] = { status: 'loading' };
     let result = null;
     const run = assignmentQueue.then(() => fetchAssignments(link));
@@ -1513,7 +1519,7 @@
         '<button role="tab" class="seg-btn' + (type === 'regular' ? ' on' : '') + '" data-sched="regular">Mon · Wed · Fri</button>' +
         '<button role="tab" class="seg-btn' + (type === 'swarm' ? ' on' : '') + '" data-sched="swarm">Tue · Thu · SWARM</button>' +
       '</div>' +
-      '<label class="lunch-pick">Lunch <select class="lunch-select">' +
+      '<label class="lunch-pick">Lunch <select class="lunch-select"' + (state.editing ? ' disabled title="Save or cancel your times first"' : '') + '>' +
         ['', 'A', 'B', 'C', 'D'].map((l) => '<option value="' + l + '"' + (l === (savedBells().lunch || '') ? ' selected' : '') + '>' +
           (l || 'Auto' + (lunch ? ' (' + lunch.letter + ')' : '')) + '</option>').join('') +
       '</select></label>' +
@@ -1568,6 +1574,7 @@
     if (!state.editRows) {
       const rows = dayRows(type).rows.map((r) => Object.assign({}, r));
       state.editRows = rows.length ? rows : blankRows(type);
+      state.editOrig = JSON.stringify(state.editRows);
     }
     const rows = state.editRows;
     const name = (r) => r.kind === 'lunch' ? 'Lunch' : r.kind === 'swarm' ? 'SWARM (Period ' + SWARM_PERIOD + ')' : 'Period ' + r.period;
@@ -1644,6 +1651,11 @@
   function currentSchedType() {
     const today = new Date();
     return isSchoolDay(today) ? dayType(today) : dayType(nextSchoolDay(today));
+  }
+
+  function editorDirty() {
+    syncEditRows();
+    return !!state.editRows && JSON.stringify(state.editRows) !== state.editOrig;
   }
 
   function closeEditor() {
@@ -1810,8 +1822,13 @@
       return loadAssignments(data.courses.find((c) => c.key === state.drawer.key), ds.dterm);
     }
     if (ds.course) return openDrawer(ds.course, ds.t);
-    if (ds.skyward) return openInSkyward(nav.find((n) => n.label === ds.skyward).el);
+    if (ds.skyward) {
+      const entry = nav.find((n) => n.label === ds.skyward);
+      const fresh = entry && !entry.el.isConnected ? findNav().find((n) => n.label === entry.label) : null;
+      return openInSkyward((fresh || entry || {}).el);
+    }
     if (ds.sched) {
+      if (state.editing && editorDirty() && !confirm('Discard the times you haven\'t saved?')) return;
       state.schedDay = ds.sched;
       state.editing = false;
       state.editRows = null;
@@ -1840,6 +1857,12 @@
         state.editing = true;
         return renderViewOnly();
       case 'save-times': return saveTimes();
+      case 'retry-assignments': {
+        const c = data.courses.find((x) => x.key === state.drawer.key);
+        delete state.assignments[c.key + '|' + state.drawer.term];
+        render();
+        return loadAssignments(c, state.drawer.term);
+      }
       case 'cancel-times': return closeEditor();
       case 'reset-times': {
         const saved = savedBells();
@@ -1865,7 +1888,7 @@
   });
 
   app.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && e.target.dataset && e.target.dataset.course) openDrawer(e.target.dataset.course);
+    if (e.key === 'Enter' && e.target.tagName !== 'BUTTON' && e.target.dataset && e.target.dataset.course) openDrawer(e.target.dataset.course);
   });
 
   app.addEventListener('input', (e) => {
@@ -2403,6 +2426,11 @@ tr.group td{font-weight:700;color:var(--accent);background:color-mix(in srgb,var
   .bar{grid-template-columns:minmax(0,120px) 1fr 34px}
   .cd{min-width:0;flex:1;padding:8px 6px}.cd b{font-size:24px}
   .seg{width:100%}.seg-btn{flex:1;padding:7px 2px;font-size:11.5px}
+}
+@media (max-width:400px){
+  .mtop .ver{display:none}
+  .mtop .brand{font-size:16px;gap:8px;white-space:nowrap}
+  .mtop-actions{gap:4px}
   .filters{min-width:100%}.search{max-width:none}
   .grid{grid-template-columns:1fr}
   .slot{grid-template-columns:70px 1fr;gap:8px}

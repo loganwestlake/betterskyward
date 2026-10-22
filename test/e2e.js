@@ -487,6 +487,72 @@ async function waitFor(fn, ms = 15000) {
       await p4.close();
     }
 
+    console.log('Review fixes');
+    {
+      // The schedule moves on by itself while it's open.
+      ({ page, errors, q, click } = await openApp(browser, BASE, undefined, new Date('2026-10-22T10:00:00-04:00'), 'America/New_York'));
+      await click('.side [data-view=schedule]');
+      check('Thursday 10:00: SWARM is current', (await q('.slot.current .slot-card b'))[0] === 'SWARM', await q('.slot.current'));
+      await page.clock.runFor(31 * 60 * 1000);
+      check('schedule moves on to lunch without reopening', (await q('.slot.current .slot-card b'))[0] === 'Lunch B', await q('.slot.current'));
+
+      // Unsaved times aren't thrown away without asking.
+      await click('[data-act="edit-times"]');
+      await page.locator('#skyward-glow-host .t-in[data-edge="start"]').first().fill('07:00');
+      page.once('dialog', (d) => d.dismiss());
+      await click('.sched-bar [data-sched="regular"]');
+      check('switching days with unsaved times asks first', (await q('.editor')).length === 1);
+      check('lunch can\'t change mid-edit', await page.locator('#skyward-glow-host .lunch-select').isDisabled());
+      await click('[data-act="cancel-times"]');
+
+      // A failed assignment load can be retried.
+      await page.evaluate(() => {
+        window.__block = true;
+        document.addEventListener('click', (e) => { if (window.__block && e.target.closest('#showGradeInfo')) e.stopImmediatePropagation(); }, true);
+      });
+      await click('.side [data-view=grades]');
+      await click('.card', 0);
+      await waitFor(async () => (await q('[data-act="retry-assignments"]')).length > 0, 12000);
+      check('failed assignment load offers Try again', (await q('[data-act="retry-assignments"]')).length === 1);
+      await page.evaluate(() => { window.__block = false; });
+      await click('[data-act="retry-assignments"]');
+      check('Try again loads the assignments', await waitFor(async () => (await q('.asg')).length > 0, 12000));
+      check('no script errors', errors.length === 0, errors);
+      await page.close();
+
+      // Odd Skyward data: "E" grades, zero-padded periods, apostrophes.
+      ({ page, errors, q, click } = await openApp(browser, BASE + '?odd', undefined, new Date('2026-10-22T07:30:00-04:00'), 'America/New_York'));
+      await page.evaluate(() => {
+        document.getElementById('skyward-glow-host').remove();
+        const td = document.querySelector('#left td');
+        td.innerHTML = td.innerHTML.replace('English 1', "WOMEN'S CHORUS").replace('</label> 1 ', '</label> 01 ');
+        document.querySelectorAll('#right tr')[1].querySelectorAll('#showGradeInfo')[1].textContent = 'E';
+      });
+      await page.evaluate(CODE); await page.waitForTimeout(800);
+      check('an "E" grade doesn\'t break the GPA', (await q('.stat .value'))[1] !== '—', await q('.stat .value'));
+      await click('.side [data-view=schedule]');
+      check('"Period 01" matches period 1', (await q('.slot .slot-card b'))[0] === "Women's Chorus", (await q('.slot .slot-card b')).slice(0, 2));
+      check('no script errors', errors.length === 0, errors);
+      await page.close();
+
+      // The phone header fits on the narrowest iPhones.
+      const ctx = await browser.newContext(Object.assign({}, devices['iPhone SE'], { viewport: { width: 320, height: 568 } }));
+      await ctx.route('https://loganwestlake.github.io/**', (r) => r.fulfill({ status: 200, body: "const VERSION = '0.0.1';" }));
+      const p5 = await ctx.newPage();
+      await p5.goto(BASE);
+      await p5.evaluate(CODE); await p5.waitForTimeout(800);
+      const fit = await p5.evaluate(() => {
+        const r = document.getElementById('skyward-glow-host').shadowRoot;
+        const close = r.querySelector('.mtop [data-act=close]').getBoundingClientRect();
+        const brand = r.querySelector('.mtop .brand').getBoundingClientRect();
+        return { closeRight: close.right, width: innerWidth, brandHeight: brand.height };
+      });
+      check('320px header: close button on screen, name on one line', fit.closeRight <= fit.width && fit.brandHeight < 40, fit);
+      await ctx.close();
+
+      check('bookmark runs on the practice pages too', fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8').includes('betterskyward\\\\/test\\\\/'));
+    }
+
     console.log('Run again while starting up');
     {
       const p2 = await browser.newPage();
